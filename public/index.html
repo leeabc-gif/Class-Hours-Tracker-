@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>课时通 · 多教师课时统计与课酬核算</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<style>
+:root{
+  --pri:#2563eb; --pri-d:#1d4ed8; --bg:#f1f5f9; --card:#ffffff;
+  --side-w:232px;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);font-family:-apple-system,"Segoe UI","Microsoft YaHei",Roboto,sans-serif;color:#1e293b}
+a{text-decoration:none;color:inherit}
+
+/* ---------- 登录页 ---------- */
+#loginView{display:flex;min-height:100vh;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#1e3a8a 0%,#2563eb 55%,#38bdf8 100%);}
+.login-card{width:400px;max-width:92vw;background:#fff;border-radius:18px;padding:34px 34px 26px;
+  box-shadow:0 24px 60px rgba(2,6,23,.35)}
+.login-card h1{font-size:22px;font-weight:700;color:#0f172a;margin:0}
+.login-card .sub{color:#64748b;font-size:13px;margin:4px 0 20px}
+.demo{background:#f8fafc;border:1px dashed #cbd5e1;border-radius:10px;padding:10px 14px;
+  font-size:12.5px;color:#475569;margin:18px 0 4px;line-height:1.9}
+.demo b{color:#0f172a}
+.toast-wrap{position:fixed;top:18px;right:18px;z-index:3000;display:flex;flex-direction:column;gap:8px;max-width:360px}
+.wt{background:#0f172a;color:#fff;padding:11px 16px;border-radius:10px;font-size:13.5px;
+  box-shadow:0 10px 24px rgba(0,0,0,.18);display:flex;gap:10px;align-items:flex-start;opacity:0;
+  transform:translateX(20px);transition:.25s}
+.wt.show{opacity:1;transform:none}
+.wt.err{background:#dc2626}
+.wt.warn{background:#b45309}
+
+/* ---------- 应用骨架 ---------- */
+#appView{display:none;height:100vh}
+.app-inner{display:flex;height:100%}
+.sidebar{width:var(--side-w);background:#0f172a;color:#cbd5e1;flex-shrink:0;display:flex;flex-direction:column;
+  position:fixed;inset:0 auto 0 0;z-index:1040}
+.side-brand{display:flex;align-items:center;gap:10px;padding:16px 18px;color:#fff;font-weight:700;font-size:16px;
+  border-bottom:1px solid rgba(255,255,255,.07)}
+.side-brand .logo{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#38bdf8,#2563eb);
+  display:flex;align-items:center;justify-content:center;font-size:16px}
+.side-user{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.07)}
+.side-user .avatar{width:36px;height:36px;border-radius:50%;background:#334155;display:flex;align-items:center;
+  justify-content:center;color:#fff;font-weight:600;flex-shrink:0;font-size:15px}
+.side-user .u-name{font-weight:600;color:#fff;font-size:14px;line-height:1.2}
+.side-user .u-sub{font-size:11.5px;color:#94a3b8}
+.nav-group{flex:1;overflow-y:auto;padding:10px 8px}
+.nav-cap{font-size:11px;color:#64748b;letter-spacing:.08em;padding:8px 10px 4px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;color:#cbd5e1;
+  cursor:pointer;font-size:13.5px;margin:1px 0;transition:.15s}
+.nav-item:hover{background:#1e293b;color:#fff}
+.nav-item.active{background:var(--pri);color:#fff}
+.nav-item i{font-size:16px;width:18px;text-align:center}
+.side-foot{padding:12px;border-top:1px solid rgba(255,255,255,.07)}
+.side-foot .btn-logout{width:100%;display:flex;align-items:center;gap:9px;justify-content:center;
+  background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:9px;padding:8px;font-size:13px}
+.side-foot .btn-logout:hover{background:#334155}
+
+.main{flex:1;margin-left:var(--side-w);display:flex;flex-direction:column;min-width:0}
+.topbar{height:58px;background:#fff;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;
+  padding:0 22px;gap:12px;position:sticky;top:0;z-index:1030}
+.topbar .pg-title{font-size:17px;font-weight:700;color:#0f172a}
+.topbar .crumb{color:#94a3b8;font-size:12.5px}
+.topbar .sp{flex:1}
+.hamburger{display:none;border:0;background:none;font-size:22px;color:#475569;cursor:pointer}
+.content{flex:1;padding:20px 22px 40px;overflow-y:auto}
+
+.page{display:none}
+.page.active{display:block}
+
+.card{background:#fff;border:1px solid #e8edf4;border-radius:14px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+.card .card-h{padding:14px 18px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.card .card-h .tt{font-weight:700;font-size:14.5px;color:#0f172a}
+.card .card-b{padding:16px 18px}
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.stat-card{background:#fff;border:1px solid #e8edf4;border-radius:14px;padding:16px 18px;display:flex;gap:14px;
+  align-items:center;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+.stat-card .ic{width:46px;height:46px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0}
+.stat-card .n{font-size:24px;font-weight:800;color:#0f172a;line-height:1.1}
+.stat-card .l{font-size:12.5px;color:#64748b;margin-top:2px}
+.chart-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.chart-box{height:300px;position:relative}
+
+.fab{position:fixed;right:26px;bottom:26px;width:56px;height:56px;border-radius:16px;border:0;
+  background:linear-gradient(135deg,#2563eb,#38bdf8);color:#fff;font-size:24px;box-shadow:0 12px 26px rgba(37,99,235,.4);
+  cursor:pointer;z-index:1050;display:flex;align-items:center;justify-content:center;transition:.15s}
+.fab:hover{transform:translateY(-2px)}
+.fab.second{bottom:92px;background:#fff;color:var(--pri);box-shadow:0 8px 20px rgba(15,23,42,.15);border:1px solid #dbe4f0}
+
+.table{--bs-table-hover-bg:#f8fafc;font-size:13.5px;margin-bottom:0}
+.table thead th{color:#64748b;font-weight:600;font-size:12.5px;white-space:nowrap;background:#f8fafc;border-bottom:1px solid #e8edf4}
+.table td{vertical-align:middle}
+.badge{font-weight:600;font-size:11.5px}
+.tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:600;background:#eef2ff;color:#4338ca}
+.tag-gray{background:#f1f5f9;color:#475569}
+.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:14px 18px;border-bottom:1px solid #f1f5f9}
+.filters select,.filters input,.filters .btn{min-width:0}
+.filters .form-select,.filters .form-control{font-size:13px}
+.dk-empty{text-align:center;color:#94a3b8;padding:46px 10px;font-size:13.5px}
+.dk-empty i{font-size:44px;display:block;margin-bottom:8px;color:#cbd5e1}
+/* class-picker */
+.class-picker{position:relative;border:1px solid #e2e8f0;border-radius:6px;padding:6px;background:#fff;min-height:38px}
+.class-picker .cp-tags{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px;min-height:22px}
+.class-picker .cp-tag{background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:12px;font-size:12.5px;display:inline-flex;align-items:center;gap:4px}
+.class-picker .cp-tag i{cursor:pointer;opacity:0.7}
+.class-picker .cp-tag i:hover{opacity:1;color:#dc2626}
+.class-picker .cp-empty{font-size:12px;padding:2px 4px}
+.class-picker .cp-addrow{display:flex;gap:4px;align-items:center}
+.class-picker .cp-q{flex:1;font-size:13px}
+.class-picker .cp-pop{position:absolute;z-index:1080;background:#fff;border:1px solid #e2e8f0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.08);max-height:240px;overflow:auto;margin-top:2px;min-width:240px}
+.class-picker .cp-opt{padding:6px 12px;cursor:pointer;font-size:13px}
+.class-picker .cp-opt:hover{background:#f1f5f9}
+.class-picker .cp-dept{color:#94a3b8;font-size:12px;margin-left:6px}
+
+/* 仪表盘「待处理」提醒条 */
+.todo-bar{background:#fffbeb;border:1px solid #fcd34d;border-radius:14px;padding:12px 16px;margin-bottom:14px;display:flex;flex-direction:column;gap:8px}
+.todo-bar .hd{display:flex;align-items:center;gap:8px;font-size:13.5px;color:#92400e}
+.todo-bar .hd i{font-size:15px}
+.todo-bar .list{display:flex;flex-direction:column;gap:6px}
+.todo-bar .list>div{background:#fffdf5;border:1px dashed #fde68a;border-radius:8px;padding:7px 10px}
+.todo-bar .ft{display:flex;justify-content:flex-end}
+
+/* 周次多选 chips */
+.week-grid{display:grid;grid-template-columns:repeat(10,1fr);gap:6px}
+.wchip{border:1px solid #e2e8f0;border-radius:7px;text-align:center;padding:5px 0;font-size:12px;color:#64748b;
+  cursor:pointer;user-select:none;background:#fff;transition:.12s}
+.wchip.on{background:var(--pri);color:#fff;border-color:var(--pri);font-weight:600}
+.wchip:disabled{opacity:.35;cursor:not-allowed}
+
+/* AI */
+.ai-wrap{display:flex;height:calc(100vh - 178px);min-height:420px;gap:14px}
+.ai-side{width:238px;flex-shrink:0;background:#fff;border:1px solid #e8edf4;border-radius:14px;display:flex;flex-direction:column;overflow:hidden}
+.ai-side .hd{padding:12px 14px;border-bottom:1px solid #f1f5f9;font-weight:700;font-size:13.5px;display:flex;align-items:center;justify-content:space-between}
+.ai-side .list{flex:1;overflow-y:auto;padding:6px}
+.ai-conv{padding:9px 11px;border-radius:9px;cursor:pointer;font-size:13px;color:#334155;display:flex;gap:8px;align-items:center}
+.ai-conv:hover{background:#f1f5f9}
+.ai-conv.on{background:#eef2ff;color:#1d4ed8;font-weight:600}
+.ai-conv .tit{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ai-main{flex:1;background:#fff;border:1px solid #e8edf4;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.ai-msgs{flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:12px;background:#fafcff}
+.msg{max-width:78%;display:flex;flex-direction:column;gap:4px}
+.msg.user{align-self:flex-end;align-items:flex-end}
+.msg.ai{align-self:flex-start;align-items:flex-start}
+.msg .bubble{padding:10px 14px;border-radius:14px;font-size:14px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+.msg.user .bubble{background:var(--pri);color:#fff;border-bottom-right-radius:4px}
+.msg.ai .bubble{background:#fff;border:1px solid #e8edf4;border-bottom-left-radius:4px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+.msg .meta{font-size:11px;color:#94a3b8}
+.ai-in{display:flex;gap:8px;padding:12px 14px;border-top:1px solid #f1f5f9}
+.ai-in textarea{resize:none;height:46px;font-size:14px}
+.ai-actions{display:flex;gap:6px;padding:10px 14px 2px;border-top:1px solid #f1f5f9;flex-wrap:wrap}
+.ai-act{border:1px solid #e2e8f0;background:#fff;border-radius:20px;padding:5px 12px;font-size:12.5px;color:#475569;cursor:pointer}
+.ai-act:hover{background:#eef2ff;color:#1d4ed8;border-color:#c7d2fe}
+
+/* 日历 */
+.cal-head{display:flex;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid #f1f5f9;flex-wrap:wrap}
+.cal-head .tt{font-weight:700;font-size:14px;color:#0f172a;margin-right:auto}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;padding:14px}
+.cal-day{min-height:96px;background:#fff;border:1px solid #eef2f7;border-radius:10px;padding:7px}
+.cal-day .w-tag{font-size:12px;color:#64748b;font-weight:600;margin-bottom:5px}
+.cal-day .event{font-size:11.5px;border-radius:6px;padding:2px 6px;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;color:#fff}
+.ev-normal{background:#2563eb}.ev-makeup{background:#d97706}.ev-swap{background:#7c3aed}.ev-training{background:#059669}
+.cal-empty{color:#94a3b8;padding:26px;text-align:center}
+
+/* 设置 */
+.set-row{display:flex;justify-content:space-between;align-items:center;padding:14px 4px;border-bottom:1px solid #f1f5f9;gap:16px}
+.set-row:last-child{border-bottom:0}
+.set-row .l{font-size:14px;font-weight:600;color:#0f172a}
+.set-row .s{font-size:12.5px;color:#94a3b8;margin-top:2px}
+
+.recent-card{border:1px solid #eef2f7;border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:7px;background:#fff;cursor:pointer;transition:.12s}
+.recent-card:hover{border-color:#c7d2fe;box-shadow:0 4px 12px rgba(37,99,235,.08)}
+
+/* modal override */
+.modal-content{border-radius:16px;border:0}
+.modal-header,.modal-footer{border:0}
+.modal-body{max-height:70vh;overflow-y:auto}
+.modal-title{font-weight:700;color:#0f172a}
+
+@media (max-width: 992px){
+  .sidebar{transform:translateX(-100%);transition:.2s}
+  .sidebar.open{transform:none}
+  .main{margin-left:0}
+  .hamburger{display:block}
+  .stat-grid{grid-template-columns:repeat(2,1fr)}
+  .chart-row{grid-template-columns:1fr}
+  .week-grid{grid-template-columns:repeat(5,1fr)}
+  .ai-wrap{flex-direction:column;height:auto}
+  .ai-side{width:100%}
+}
+.badge-soft{background:#eef2ff;color:#4338ca}
+.kbd-hint{font-size:11px;color:#94a3b8}
+.form-label{font-weight:600;font-size:13px;color:#334155}
+.hidden{display:none !important}
+</style>
+</head>
+<body>
+
+<!-- 登录 -->
+<div id="loginView">
+  <form class="login-card" onsubmit="return KS.login(event)">
+    <div style="display:flex;align-items:center;gap:12px">
+      <div style="width:46px;height:46px;border-radius:12px;background:linear-gradient(135deg,#38bdf8,#2563eb);color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px"><i class="bi bi-mortarboard-fill"></i></div>
+      <div><h1>课时通</h1><div class="sub">多教师课时统计 · 自动课酬核算</div></div>
+    </div>
+    <label class="form-label mt-2">登录账号</label>
+    <input id="lgUser" class="form-control form-control-lg" placeholder="请输入账号" autocomplete="username" required>
+    <label class="form-label mt-3">密码</label>
+    <input id="lgPwd" type="password" class="form-control form-control-lg" placeholder="请输入密码" autocomplete="current-password" required>
+    <button id="lgBtn" type="submit" class="btn btn-primary btn-lg w-100 mt-4">登 录</button>
+    <div class="demo">
+      <b>首次登录</b>：使用安装时设置的管理员账号<br>
+      <span style="color:#94a3b8">（演示账号仅在全新安装时由种子数据生成）</span>
+    </div>
+    <div class="text-center mt-3" style="font-size:14px">
+      还没有账号？<a href="#" onclick="KS.showRegister();return false" style="color:#2563eb;text-decoration:none">立即注册</a>
+    </div>
+  </form>
+</div>
+
+<!-- 注册 -->
+<div id="registerView" style="display:none">
+  <form class="login-card" onsubmit="return KS.register(event)">
+    <div style="display:flex;align-items:center;gap:12px">
+      <div style="width:46px;height:46px;border-radius:12px;background:linear-gradient(135deg,#38bdf8,#2563eb);color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px"><i class="bi bi-person-plus-fill"></i></div>
+      <div><h1>教师注册</h1><div class="sub">注册后需等待管理员启用</div></div>
+    </div>
+    <label class="form-label mt-2">登录账号</label>
+    <input id="rgUser" class="form-control form-control-lg" placeholder="3-32 位字母/数字/下划线" autocomplete="username" required>
+    <label class="form-label mt-3">密码</label>
+    <input id="rgPwd" type="password" class="form-control form-control-lg" placeholder="8-72 位" autocomplete="new-password" required>
+    <label class="form-label mt-3">真实姓名</label>
+    <input id="rgName" class="form-control form-control-lg" placeholder="2-32 个字符" required>
+    <button id="rgBtn" type="submit" class="btn btn-primary btn-lg w-100 mt-4">注 册</button>
+    <div class="text-center mt-3" style="font-size:14px">
+      已有账号？<a href="#" onclick="KS.showLogin();return false" style="color:#2563eb;text-decoration:none">返回登录</a>
+    </div>
+  </form>
+</div>
+
+<!-- 应用 -->
+<div id="appView">
+  <div class="app-inner">
+    <!-- 侧边栏 -->
+    <aside class="sidebar" id="sidebar">
+      <div class="side-brand"><span class="logo"><i class="bi bi-mortarboard-fill"></i></span>课时通</div>
+      <div class="side-user">
+        <div class="avatar" id="sideAvatar">王</div>
+        <div style="min-width:0">
+          <div class="u-name" id="sideName">王建国</div>
+          <div class="u-sub" id="sideRole">讲师 · 机械工程系</div>
+        </div>
+      </div>
+      <nav class="nav-group" id="navList"></nav>
+      <div class="side-foot"><button class="btn-logout" onclick="KS.logout()"><i class="bi bi-box-arrow-right"></i>退出登录</button></div>
+    </aside>
+
+    <div class="main">
+      <div class="topbar">
+        <button class="hamburger" onclick="KS.toggleSide()"><i class="bi bi-list"></i></button>
+        <span class="pg-title" id="topTitle">工作台</span>
+        <span class="crumb" id="topCrumb"></span>
+        <div class="sp"></div>
+        <span class="text-secondary" style="font-size:12.5px" id="topTerm"></span>
+      </div>
+      <div class="content" id="pageHost"><!-- 各页面由 JS 注入 --></div>
+    </div>
+  </div>
+</div>
+
+<!-- 极简快速录入弹窗 -->
+<div class="modal fade" id="quickModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <div class="modal-title"><i class="bi bi-lightning-charge-fill text-primary me-1"></i>快速录入课时</div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="quickBody"></div>
+      <div class="modal-footer py-2">
+        <button class="btn btn-outline-secondary btn-sm" onclick="KS.quickMore()"><i class="bi bi-arrows-fullscreen me-1"></i>完整表单</button>
+        <button class="btn btn-primary" id="quickSaveBtn" onclick="KS.quickSave()"><i class="bi bi-check-lg me-1"></i>保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="bsModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header"><div class="modal-title" id="bsTitle">标题</div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body" id="bsBody"></div>
+      <div class="modal-footer" id="bsFoot"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+<button class="fab" id="fabQuick" title="快速录入" onclick="KS.quickOpen()"><i class="bi bi-plus-lg"></i></button>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="static/app/app.js"></script>
+</body>
+</html>

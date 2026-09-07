@@ -1,0 +1,144 @@
+<?php
+namespace app\common\service;
+
+use think\Db;
+
+/**
+ * 数据库整库备份（管理员专用）
+ *
+ * 生成标准 SQL 文本：DROP TABLE + CREATE TABLE + INSERT，
+ * 直接用 phpMyAdmin / 命令行 mysql 导入即可还原。
+ *
+ * 只备份 ks_ 前缀的业务表，避免把 MySQL 系统库一起拖进来。
+ */
+class Backup
+{
+    /** 备份文件表前缀（只备份业务表） */
+    const TABLE_PREFIX = 'ks_';
+
+    /**
+     * 生成整库 SQL
+     * @return array ['sql'=>string, 'tables'=>int, 'rows'=>int, 'size'=>int]
+     */
+    public static function dump()
+    {
+        $pdo       = self::rawPdo();
+        $dbName    = config('database.database');
+        $ver       = $pdo->getAttribute(\PDO::ATTR_SERVER_VERSION);
+        $time      = date('Y-m-d H:i:s');
+
+        $lines   = [];
+        $lines[] = '-- ============================================================';
+        $lines[] = '-- 多教师课时统计与课酬核算系统 —— 数据库备份';
+        $lines[] = "-- 备份时间：{$time}";
+        $lines[] = "-- 数据库：{$dbName}";
+        $lines[] = "-- 服务器：MySQL {$ver}";
+        $lines[] = '';
+        $lines[] = '-- ============================================================';
+        $lines[] = '';
+        $lines[] = 'SET NAMES utf8mb4;';
+        $lines[] = 'SET FOREIGN_KEY_CHECKS = 0;';
+        $lines[] = '';
+
+        $tableRows = $pdo->query("SHOW TABLES")->fetchAll(\PDO::FETCH_ASSOC);
+        $tables    = [];
+        foreach ($tableRows as $tr) {
+            $name = current($tr);
+            if (strpos($name, self::TABLE_PREFIX) === 0) {
+                $tables[] = $name;
+            }
+        }
+        sort($tables);
+
+        $totalRows = 0;
+        foreach ($tables as $t) {
+            $createStmt = $pdo->query("SHOW CREATE TABLE `{$t}`");
+            $createRow  = $createStmt ? $createStmt->fetch(\PDO::FETCH_ASSOC) : false;
+            $createSql  = (is_array($createRow) && isset($createRow['Create Table']))
+                ? $createRow['Create Table'] : '';
+
+            $lines[] = '-- ----------------------------';
+            $lines[] = "-- 表结构：{$t}";
+            $lines[] = '-- ----------------------------';
+            $lines[] = "DROP TABLE IF EXISTS `{$t}`;";
+            $lines[] = $createSql . ';';
+            $lines[] = '';
+
+            $rows = $pdo->query("SELECT * FROM `{$t}`")->fetchAll(\PDO::FETCH_ASSOC);
+            if (empty($rows)) {
+                $lines[] = "-- 表 {$t} 无数据";
+                $lines[] = '';
+                continue;
+            }
+
+            $lines[] = "-- 表数据：{$t}（" . count($rows) . " 行）";
+            $totalRows += count($rows);
+
+            // 每 200 行一个 INSERT，避免单条语句过长被 max_allowed_packet 拒绝
+            $cols    = array_keys($rows[0]);
+            $colList = '`' . implode('`,`', $cols) . '`';
+            $chunks  = array_chunk($rows, 200);
+            foreach ($chunks as $chunk) {
+                $values = [];
+                foreach ($chunk as $row) {
+                    $vals = [];
+                    foreach ($cols as $c) {
+                        $v = $row[$c];
+                        if ($v === null) {
+                            $vals[] = 'NULL';
+                        } else {
+                            $vals[] = $pdo->quote((string)$v);
+                        }
+                    }
+                    $values[] = '(' . implode(',', $vals) . ')';
+                }
+                $lines[] = "INSERT INTO `{$t}` ({$colList}) VALUES " . implode(',' . PHP_EOL, $values) . ';';
+            }
+            $lines[] = '';
+        }
+
+        $lines[] = 'SET FOREIGN_KEY_CHECKS = 1;';
+        $lines[] = "-- 备份结束，共 {$totalRows} 行数据";
+
+        $sql = implode(PHP_EOL, $lines);
+        return [
+            'sql'    => $sql,
+            'tables' => count($tables),
+            'rows'   => $totalRows,
+            'size'   => strlen($sql),
+        ];
+    }
+
+    /**
+     * 构造原生 PDO 连接（只读备份专用）
+     *
+     * 不用 Db::connect()：那在 ThinkPHP 5.1 返回的是 Query 对象，
+     * Query::getPdo() 会尝试解析“操作表”，空表名会抛
+     * SQLSTATE 1103 (Incorrect table name '')。备份是纯 SQL 读取，
+     * 直接用 config 参数建原生 PDO 最稳，不依赖 ORM 表上下文。
+     */
+    public static function rawPdo()
+    {
+        // 直接读取 installed.php（避免依赖 config() 在某些上下文中不可用）
+        $installedPath = __DIR__ . '/../../../config/installed.php';
+        $runtimeConfig = is_file($installedPath) ? (require $installedPath) : [];
+        if (!is_array($runtimeConfig)) {
+            $runtimeConfig = [];
+        }
+
+        // 读取 config/database.php 的默认值（无法 require 已加载的文件，所以手动写默认值）
+        $host    = isset($runtimeConfig['hostname']) ? $runtimeConfig['hostname'] : '127.0.0.1';
+        $port    = isset($runtimeConfig['hostport']) ? $runtimeConfig['hostport'] : '3399';
+        $name    = isset($runtimeConfig['database']) ? $runtimeConfig['database'] : 'keshi';
+        $user    = isset($runtimeConfig['username']) ? $runtimeConfig['username'] : 'keshi';
+        $pass    = isset($runtimeConfig['password']) ? $runtimeConfig['password'] : 'keshi123456';
+        $charset = 'utf8mb4';
+
+        $dsn = "mysql:host={$host};port={$port};dbname={$name};charset={$charset}";
+        $pdo = new \PDO($dsn, $user, $pass, [
+            \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
+            \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+        ]);
+        return $pdo;
+    }
+}

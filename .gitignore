@@ -1,0 +1,20 @@
+# ===== IDE =====
+/.idea
+/.vscode
+*.swp
+*.swo
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== 运行期生成物 / 敏感文件 =====
+*.log
+.env
+/config/installed.php        # 安装生成的数据库配置（含连接凭据），绝不入库
+/runtime/*                   # 日志/缓存/锁/备份
+/runtime
+!/runtime/.gitignore
+
+# ===== 上传/临时 =====
+*.tmp
