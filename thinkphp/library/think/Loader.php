@@ -371,6 +371,8 @@ class Loader
      */
     public static function parseName($name, $type = 0, $ucfirst = true)
     {
+        // PHP 8.2: preg_* 不再接受 null，强转避免触发 deprecation
+        $name = (string) $name;
         if ($type) {
             $name = preg_replace_callback('/_([a-zA-Z])/', function ($match) {
                 return strtoupper($match[1]);
