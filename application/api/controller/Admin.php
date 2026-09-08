@@ -644,6 +644,23 @@ class Admin extends Base
         ]);
     }
 
+    /**
+     * 拉取系统模型接口的模型列表
+     * Key 未填时兜底使用已保存的系统 Key
+     */
+    public function aiModels()
+    {
+        $data = $this->jsonInput();
+        $url  = trim(isset($data['api_url']) ? (string) $data['api_url'] : '');
+        $key  = trim(isset($data['api_key']) ? (string) $data['api_key'] : '');
+        if ($key === '') {
+            $key = (string) Setting::get('ai_api_key', '');
+        }
+        $r = AiConfig::fetchModels($url, $key);
+        if (!$r['ok']) return $this->fail($r['msg']);
+        return $this->ok(['models' => $r['models']], '已拉取 ' . count($r['models']) . ' 个模型');
+    }
+
     // ============================================================
     // 系统更新（在线更新）
     // ============================================================
@@ -658,6 +675,9 @@ class Admin extends Base
             'maintenance'       => Base::underMaintenance(),
             'manifest_url'      => (string) Setting::get('update_manifest_url', ''),
             'app_version_baseline' => (string) config('app.version', '1.0.0'),
+            'can_rollback'      => UpdateService::hasFileBackup(),
+            'backups'           => UpdateService::listBackups(),
+            'php_version'       => PHP_VERSION,
         ]);
     }
 
@@ -709,6 +729,9 @@ class Admin extends Base
                 return $this->ok(['skipped' => true, 'msg' => '已是最新版本（' . $info['current_version'] . '）。'], '已是最新版本');
             }
 
+            // 环境预检：PHP 版本下限 / 起始版本要求，不满足拒绝升级
+            UpdateService::assertEnvCompatible($info);
+
             $pkg = UpdateService::download($info['files'][0], $manifestUrl);
 
             // 备份将被覆盖的文件 + 整库备份（含 SQL 时尤其重要）
@@ -726,6 +749,13 @@ class Admin extends Base
                 Setting::set('app_version', $targetVer);
                 Setting::set('update_manifest_url', $manifestUrl);
                 Base::setMaintenance(false);
+                // 成功后收尾：裁剪旧备份、清理历史更新包，避免无限堆积（失败不影响升级结果）
+                try {
+                    UpdateService::pruneBackups();
+                    UpdateService::cleanupPackages();
+                } catch (\Throwable $ce) {
+                    // 仅记录，不阻断
+                }
                 $this->log('update', 'system', 0,
                     '系统升级 ' . $info['current_version'] . ' → ' . $targetVer .
                     '；备份文件 ' . $fileBackup['files'] . ' 个，数据库备份 ' . $dbBackup['tables'] . ' 表');
@@ -736,20 +766,60 @@ class Admin extends Base
                     'db_backup' => $dbBackup,
                 ], '更新成功');
             } catch (\Throwable $e) {
-                // 尝试回滚文件与 SQL
+                // 尝试回滚文件与 SQL；回滚失败必须显式告知，不能静默
+                $rollbackMsg = '';
                 try {
                     UpdateService::rollback($pkg['path']);
+                    $rollbackMsg = '（已自动回滚到升级前文件）';
                 } catch (\Throwable $re) {
-                    // 回滚失败也继续报告主错误
+                    $rollbackMsg = '（自动回滚也失败：' . $re->getMessage() . '，请尽快用备份手工恢复）';
                 }
                 Base::setMaintenance(false);
-                throw $e;
+                throw new \RuntimeException($e->getMessage() . $rollbackMsg, 0, $e);
             }
         } catch (\Throwable $e) {
             Base::setMaintenance(false);
             @file_put_contents(app()->getRootPath() . 'runtime/debug_upd.txt',
                 date('c') . "\n" . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n");
             return $this->fail('更新失败：' . $e->getMessage());
+        } finally {
+            UpdateService::releaseLock($lock);
+        }
+    }
+
+    /**
+     * 手动回滚：用最近一次文件备份还原，并按备份元信息回退版本号；
+     * 若最近下载的更新包含 downgrade.sql 会一并执行。
+     */
+    public function updateRollback()
+    {
+        if (!UpdateService::hasFileBackup()) {
+            return $this->fail('没有可用的文件备份，无法回滚。');
+        }
+        $lock = UpdateService::acquireLock();
+        if (!$lock) {
+            return $this->fail('已有更新任务正在进行，请稍后再试。');
+        }
+        try {
+            $before = UpdateService::currentVersion();
+            Base::setMaintenance(true);
+            try {
+                // 最近下载的更新包可能内含 downgrade.sql，用于回退表结构
+                $r = UpdateService::rollback(UpdateService::latestPackage());
+            } finally {
+                Base::setMaintenance(false);
+            }
+            $after = UpdateService::currentVersion();
+            $this->log('update_rollback', 'system', 0,
+                '手动回滚：v' . $before . ' → v' . $after . '，还原文件 ' . $r['restored_files'] . ' 个');
+            return $this->ok([
+                'from'            => $before,
+                'to'              => $after,
+                'restored_files'  => $r['restored_files'],
+            ], '已回滚到上一版本，请刷新页面确认。');
+        } catch (\Throwable $e) {
+            Base::setMaintenance(false);
+            return $this->fail('回滚失败：' . $e->getMessage());
         } finally {
             UpdateService::releaseLock($lock);
         }

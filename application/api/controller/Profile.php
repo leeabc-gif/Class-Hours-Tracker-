@@ -63,6 +63,24 @@ class Profile extends Base
     }
 
     /**
+     * 拉取自定义接口的模型列表
+     * Key 未填时兜底使用已保存的个人 Key
+     */
+    public function aiModels()
+    {
+        $this->requireLogin();
+        $data = $this->jsonInput();
+        $url  = trim(isset($data['api_url']) ? (string) $data['api_url'] : '');
+        $key  = trim(isset($data['api_key']) ? (string) $data['api_key'] : '');
+        if ($key === '') {
+            $key = AiConfig::plainKeyForUser($this->user->id);
+        }
+        $r = AiConfig::fetchModels($url, $key);
+        if (!$r['ok']) return $this->fail($r['msg']);
+        return $this->ok(['models' => $r['models']], '已拉取 ' . count($r['models']) . ' 个模型');
+    }
+
+    /**
      * 修改登录密码
      */
     public function password()

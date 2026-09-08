@@ -173,6 +173,11 @@
       // 下载流
       return { raw: true, status: resp.status };
     }
+    if (data === null) {
+      // 后端返回了非 JSON（多为 500 错误页/被重定向），原来会静默失败，用户感觉"点了没反应"
+      toast('服务异常（HTTP ' + resp.status + '），请检查后端 PHP 是否正常', 'err');
+      throw new Error('bad_response_' + resp.status);
+    }
     if (data && data.code === 401) {
       // 登录失效统一踢回登录页
       App.user = null;
@@ -204,38 +209,113 @@
   // =====================================================================
   // 3. 登录 / 会话恢复
   // =====================================================================
+  function restartAuthAnim(viewId) {
+    const card = document.querySelector('#' + viewId + ' .auth-card');
+    if (!card) return;
+    card.style.animation = 'none';
+    void card.offsetWidth; // 触发重排以重放进场动画
+    card.style.animation = '';
+  }
   function showLogin() {
     $('#loginView').style.display = 'flex';
     $('#registerView').style.display = 'none';
     $('#appView').style.display = 'none';
     document.body.classList.add('login-page');
+    clearAuthErrs();
+    restartAuthAnim('loginView');
   }
   function showRegister() {
     $('#loginView').style.display = 'none';
     $('#registerView').style.display = 'flex';
     $('#appView').style.display = 'none';
     document.body.classList.add('login-page');
+    clearAuthErrs();
+    restartAuthAnim('registerView');
   }
   function showApp() {
     $('#loginView').style.display = 'none';
     $('#registerView').style.display = 'none';
     $('#appView').style.display = 'block';
     document.body.classList.remove('login-page');
+    const fab = $('#fabQuick');
+    if (fab) fab.classList.remove('hidden');
   }
+
+  // ---------- 登录/注册表单辅助 ----------
+  function fieldErr(inputId, errId, msg) {
+    const e = $('#' + errId);
+    if (e) { e.textContent = msg; e.classList.add('show'); }
+    const i = $('#' + inputId);
+    if (i) { i.classList.add('is-invalid'); i.focus(); }
+  }
+  function clearAuthErrs() {
+    document.querySelectorAll('.field-err').forEach(e => { e.classList.remove('show'); e.textContent = ''; });
+    document.querySelectorAll('.auth-card .form-control').forEach(i => i.classList.remove('is-invalid'));
+  }
+  function setBtnLoading(btn, on) {
+    if (!btn) return;
+    btn.disabled = on;
+    if (on) {
+      btn.dataset.oh = btn.innerHTML;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>请稍候…';
+    } else if (btn.dataset.oh) {
+      btn.innerHTML = btn.dataset.oh;
+    }
+  }
+  App.togglePwd = function (id, btn) {
+    const i = $('#' + id);
+    if (!i) return;
+    const show = i.type === 'password';
+    i.type = show ? 'text' : 'password';
+    const icon = btn.querySelector('i');
+    if (icon) icon.className = show ? 'bi bi-eye-slash' : 'bi bi-eye';
+    i.focus();
+  };
+  App.capsTip = function (ev, id) {
+    const t = $('#' + id);
+    if (!t || !ev.getModifierState) return;
+    t.classList.toggle('show', !!ev.getModifierState('CapsLock'));
+  };
+  App.pwdStrength = function () {
+    const v = $('#rgPwd').value, el = $('#rgPwdStr');
+    if (!el) return;
+    if (!v) { el.textContent = ''; return; }
+    let s = 0;
+    if (v.length >= 8) s++;
+    if (v.length >= 12) s++;
+    if (/[a-z]/.test(v) && /[A-Z]/.test(v)) s++;
+    if (/\d/.test(v)) s++;
+    if (/[^A-Za-z0-9]/.test(v)) s++;
+    const lv = s <= 2 ? ['弱', '#dc2626'] : (s <= 3 ? ['中', '#b45309'] : ['强', '#059669']);
+    el.innerHTML = '密码强度：<b style="color:' + lv[1] + '">' + lv[0] + '</b>';
+  };
 
   App.login = async function (ev) {
     if (ev && ev.preventDefault) ev.preventDefault();
+    clearAuthErrs();
     const username = $('#lgUser').value.trim();
     const password = $('#lgPwd').value;
-    if (!username || !password) { toast('请输入账号和密码', 'warn'); return false; }
-    const btn = $('#lgBtn'); btn.disabled = true;
+    let bad = false;
+    if (!username) { fieldErr('lgUser', 'lgUserErr', '请输入账号'); bad = true; }
+    if (!password) { fieldErr('lgPwd', 'lgPwdErr', '请输入密码'); bad = true; }
+    if (bad) return false;
+    const btn = $('#lgBtn'); setBtnLoading(btn, true);
     try {
       const res = await POST('/api/auth/login', { username, password });
-      if (res.code !== 0) { toast(res.msg || '登录失败', 'err'); btn.disabled = false; return false; }
+      if (res.code !== 0) {
+        fieldErr('lgPwd', 'lgPwdErr', res.msg || '登录失败');
+        setBtnLoading(btn, false);
+        return false;
+      }
       App.user = res.data.user;
       App.boot = res.data.boot;
       enterApp();
-    } catch (e) { btn.disabled = false; }
+    } catch (e) {
+      setBtnLoading(btn, false);
+      if (e && e.message && e.message.indexOf('bad_response') !== 0 && !e.handled) {
+        toast('登录失败：' + (e.message || '未知错误'), 'err');
+      }
+    }
     return false;
   };
 
@@ -264,20 +344,44 @@
 
   App.register = async function (ev) {
     if (ev && ev.preventDefault) ev.preventDefault();
+    clearAuthErrs();
     const username = $('#rgUser').value.trim();
     const password = $('#rgPwd').value;
     const name     = $('#rgName').value.trim();
-    if (!username || !password || !name) { toast('请填写完整', 'warn'); return false; }
-    const btn = $('#rgBtn'); btn.disabled = true;
+    // 客户端预检，规则与后端 Auth::register 一致，错误定位到字段
+    let bad = false;
+    if (!/^[A-Za-z0-9_]{3,32}$/.test(username)) {
+      fieldErr('rgUser', 'rgUserErr', '账号只能包含字母、数字和下划线，长度 3-32 位'); bad = true;
+    }
+    if (password.length < 8 || password.length > 72) {
+      fieldErr('rgPwd', 'rgPwdErr', '密码长度须为 8-72 位'); bad = true;
+    }
+    if (name.length < 2 || name.length > 32) {
+      fieldErr('rgName', 'rgNameErr', '真实姓名长度须为 2-32 个字符'); bad = true;
+    }
+    if (bad) return false;
+    const btn = $('#rgBtn'); setBtnLoading(btn, true);
     try {
       const res = await POST('/api/auth/register', { username, password, name });
-      if (res.code !== 0) { toast(res.msg || '注册失败', 'err'); btn.disabled = false; return false; }
-      // 成功：清空表单 + 提示 + 切回登录页
+      if (res.code !== 0) {
+        // 服务端错误按关键词定位到字段，无法定位再 toast
+        const msg = res.msg || '注册失败';
+        if (msg.indexOf('账号') >= 0) fieldErr('rgUser', 'rgUserErr', msg);
+        else if (msg.indexOf('密码') >= 0) fieldErr('rgPwd', 'rgPwdErr', msg);
+        else if (msg.indexOf('姓名') >= 0) fieldErr('rgName', 'rgNameErr', msg);
+        else toast(msg, 'err');
+        setBtnLoading(btn, false);
+        return false;
+      }
+      // 成功：清空表单 + 预填登录账号 + 切回登录页
       $('#rgUser').value = ''; $('#rgPwd').value = ''; $('#rgName').value = '';
-      btn.disabled = false;
+      App.pwdStrength();
+      setBtnLoading(btn, false);
       toast('注册成功，请等待管理员启用', 'ok');
       showLogin();
-    } catch (e) { btn.disabled = false; }
+      $('#lgUser').value = username;
+      $('#lgPwd').focus();
+    } catch (e) { setBtnLoading(btn, false); }
     return false;
   };
 
@@ -736,7 +840,7 @@
       + '<button class="btn btn-light btn-sm" onclick="KS.batchOpen()"><i class="bi bi-collection me-1"></i>批量生成</button>'
       + '<button class="btn btn-primary btn-sm" onclick="KS.lessonForm()"><i class="bi bi-plus-lg me-1"></i>完整新增</button>'
       + '</div>'
-      + lessonFilterBar()
+      + lessonFilterBar('<button class="btn btn-outline-success btn-sm" onclick="KS.exportMine()"><i class="bi bi-download me-1"></i>导出</button>')
       + '<div class="table-responsive"><table class="table"><thead><tr>'
       + '<th>周</th><th>星期</th><th>节次</th><th>课程</th><th>班级</th><th>类型</th><th>节数</th><th class="text-end">金额</th><th>来源</th><th>授课日期</th><th style="width:120px">操作</th>'
       + '</tr></thead><tbody id="lessonTbody"></tbody></table></div>'
@@ -998,7 +1102,10 @@
       + '<div class="card-b"><div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="pfAiEnabled"><label class="form-check-label" for="pfAiEnabled">启用我的 AI 分析</label></div>'
       + '<div class="mb-3"><label class="form-label">模型来源</label><select id="pfAiSource" class="form-select" onchange="KS.togglePersonalAiFields()"><option value="system">使用系统默认模型</option><option value="custom">使用我自己的模型</option></select></div>'
       + '<div id="pfCustomAiFields"><div class="mb-2"><label class="form-label">接口地址</label><input id="pfAiUrl" class="form-control" placeholder="https://api.example.com/v1/chat/completions"></div>'
-      + '<div class="row g-2"><div class="col-12 col-lg-6"><label class="form-label">模型名称</label><input id="pfAiModel" class="form-control" placeholder="如：gpt-4o-mini"></div>'
+      + '<div class="row g-2"><div class="col-12 col-lg-6"><label class="form-label">模型名称</label>'
+      + '<div class="input-group"><input id="pfAiModel" class="form-control" placeholder="如：gpt-4o-mini" list="pfAiModelList">'
+      + '<button class="btn btn-outline-secondary" type="button" onclick="KS.fetchAiModels()" title="根据接口地址和 Key 自动拉取模型列表"><i class="bi bi-arrow-down-circle me-1"></i>拉取</button></div>'
+      + '<datalist id="pfAiModelList"></datalist></div>'
       + '<div class="col-12 col-lg-6"><label class="form-label">API Key</label><input id="pfAiKey" type="password" class="form-control" placeholder="留空表示保留原 Key"></div></div></div>'
       + '<div class="small text-muted mt-2" id="pfAiStatus">正在读取配置…</div>'
       + '<button class="btn btn-success mt-3" onclick="KS.savePersonalAi()"><i class="bi bi-check me-1"></i>保存 AI 配置</button></div></div></div>'
@@ -1024,6 +1131,20 @@
     $('#pfAiStatus').textContent = d.system_enabled ? (d.effective_configured ? ('当前生效：'+(d.effective_source==='custom'?'个人模型':'系统模型')+'，接口已配置') : '当前来源尚未完成接口、模型或 Key 配置') : '管理员已关闭系统 AI，当前不能调用大模型';
     App.togglePersonalAiFields();
   }
+  App.fetchAiModels=async function(){
+    const url=$('#pfAiUrl').value.trim(), key=$('#pfAiKey').value.trim();
+    if(!url){toast('请先填写接口地址','warn');return;}
+    toast('正在拉取模型列表…');
+    const res=await POST('/api/profile/aiModels',{api_url:url,api_key:key});
+    if(res.code!==0){toast(res.msg,'err');return;}
+    const models=(res.data&&res.data.models)||[];
+    const dl=$('#pfAiModelList'); if(!dl)return;
+    dl.innerHTML=models.map(m=>'<option value="'+esc(m)+'">').join('');
+    const inp=$('#pfAiModel');
+    if(inp && !inp.value && models.length) inp.value=models[0];
+    toast('已拉取 '+models.length+' 个模型，点击模型名称输入框可下拉选择');
+    if(inp) inp.focus();
+  };
   App.togglePersonalAiFields=function(){
     const custom=$('#pfAiSource') && $('#pfAiSource').value==='custom';
     if($('#pfCustomAiFields')) $('#pfCustomAiFields').style.display=custom?'':'none';
@@ -1460,7 +1581,15 @@
   // =====================================================================
   // 12. 导出 & 备份
   // =====================================================================
-  App.exportMine = function(){ downloadCSV('/api/export/mine?t=' + Date.now()); };
+  App.exportMine = function(){
+    // 带上当前筛选条件（学期/课程/类型/月份/关键词），导出 = 所见即所得
+    const q = buildLessonQuery() || {};
+    const sp = new URLSearchParams();
+    Object.keys(q).forEach(k => { if (q[k] !== '' && q[k] != null) sp.set(k, q[k]); });
+    sp.set('t', Date.now());
+    downloadCSV('/api/export/mine?' + sp.toString());
+    toast('正在按当前筛选条件导出课时明细…');
+  };
   App.exportSchool = function(type){
     const term = curTerm(); const q = ['?type='+type];
     if (term) q.push('term_id='+term.id);
@@ -1718,7 +1847,7 @@
           <div class="table-responsive"><table class="table"><thead><tr><th>学期</th><th>周次</th><th>开学日</th><th>课时</th><th style="width:180px">操作</th></tr></thead><tbody id="termTbody"></tbody></table></div></div></div>
       <div class="col-12 col-lg-6"><div class="card mb-3"><div class="card-h"><i class="bi bi-book text-primary"></i><span class="tt">全校课程库</span>
         <div class="flex-grow-1"></div><button class="btn btn-sm btn-primary" onclick="KS.adminCourseForm()">新增课程</button></div>
-        <div class="table-responsive" style="max-height:340px;overflow:auto"><table class="table"><thead><tr><th>课程</th><th>归属</th><th>单价</th><th>班级</th><th>引用</th><th style="width:70px"></th></tr></thead><tbody id="adminCourseTbody"></tbody></table></div></div>
+        <div class="table-responsive" style="max-height:340px;overflow:auto"><table class="table"><thead><tr><th>课程</th><th>归属</th><th>单价</th><th>班级</th><th>引用</th><th style="width:110px">操作</th></tr></thead><tbody id="adminCourseTbody"></tbody></table></div></div>
         <div class="card"><div class="card-h"><i class="bi bi-sliders text-primary"></i><span class="tt">系统参数</span></div>
         <div class="card-b"><div class="mb-3"><label class="form-label">学校名称</label><input id="cfSchool" class="form-control"></div>
         <div class="row g-2">
@@ -1729,7 +1858,7 @@
         <div class="col-6"><label class="form-label">AI 引擎标识</label><input id="cfProv" class="form-control" placeholder="openai-compatible"></div></div>
         <div class="mb-2"><label class="form-label">系统模型接口地址</label><input id="cfUrl" class="form-control" placeholder="https://api.example.com/v1/chat/completions"></div>
         <div class="row g-2"><div class="col-6"><label class="form-label">系统 API Key</label><input id="cfKey" type="password" class="form-control" placeholder="留空表示保留原 Key"></div>
-        <div class="col-6"><label class="form-label">系统模型名称</label><input id="cfModel" class="form-control" placeholder="如：gpt-4o-mini"></div></div>
+        <div class="col-6"><label class="form-label">系统模型名称</label><div class="input-group"><input id="cfModel" class="form-control" placeholder="如：gpt-4o-mini" list="cfModelList"><button class="btn btn-outline-secondary" type="button" onclick="KS.fetchSysModels()" title="根据接口地址和 Key 自动拉取模型列表"><i class="bi bi-arrow-down-circle me-1"></i>拉取</button></div><datalist id="cfModelList"></datalist></div></div>
         <div class="form-check mt-2"><input class="form-check-input" type="checkbox" id="cfKeyClear"><label class="form-check-label" for="cfKeyClear">清除已保存的系统 Key</label></div>
         <div class="small text-muted mt-2" id="cfKeyStatus">系统 Key 状态：读取中…</div>
         <button class="btn btn-primary mt-2" onclick="KS.saveSettings()"><i class="bi bi-check me-1"></i>保存系统参数</button></div></div></div>
@@ -1761,7 +1890,7 @@
     const c=id?list.find(x=>x.id===id):null;
     const depts=(deptRes.code===0)?(deptRes.data||[]):[];
     const deptOpts=depts.map(d=>'<option value="'+d.id+'"'+(c&&c.department_id===d.id?' selected':'')+'>'+esc(d.name)+'</option>').join('');
-    showModal('班级', `<div class="row g-2"><div class="col-12"><label class="form-label">班级名称</label><input id="clName" class="form-control" value="${c?esc(c.name):''}"></div>
+    openModal('班级', `<div class="row g-2"><div class="col-12"><label class="form-label">班级名称</label><input id="clName" class="form-control" value="${c?esc(c.name):''}"></div>
       <div class="col-7"><label class="form-label">所属院系</label><select id="clDept" class="form-select"><option value="0">未指定</option>${deptOpts}</select></div>
       <div class="col-5"><label class="form-label">入学年份</label><input id="clYear" type="number" class="form-control" value="${c?(c.year||''):new Date().getFullYear()-1}"></div>
       <div class="col-6"><label class="form-label">排序</label><input id="clSort" type="number" class="form-control" value="${c?c.sort:0}"></div>
@@ -1793,14 +1922,18 @@
     if (gone('deptTbody')) return;
     const list=res.data||[];
     tb.innerHTML=list.map(d=>'<tr><td><b>'+esc(d.name)+'</b></td><td>'+d.teacher_count+'</td>'
-      +'<td><button class="btn btn-sm btn-outline-danger py-0" onclick="KS.deptDel('+d.id+','+jsStr(d.name)+')">删</button></td></tr>').join('')
+      +'<td><button class="btn btn-sm btn-outline-secondary py-0" onclick="KS.deptForm('+d.id+')">编辑</button> '
+      +'<button class="btn btn-sm btn-outline-danger py-0" onclick="KS.deptDel('+d.id+','+jsStr(d.name)+')">删</button></td></tr>').join('')
       || '<tr><td colspan="3" class="text-center text-muted">暂无院系</td></tr>';
   }
-  App.deptForm=function(){
-    openModal('新增院系','<div class="mb-2"><label class="form-label">院系名称</label><input id="dpName" class="form-control"></div>',
-      [{t:'取消',c:'btn-light',x:true},{t:'保存',c:'btn-primary',act:()=>KS.deptSave()}]);
+  App.deptForm=async function(id){
+    let d=null;
+    if(id){ const res=await GET('/api/admin/departments'); d=(res.code===0?(res.data||[]):[]).find(x=>x.id===id)||null; }
+    openModal(d?'编辑院系':'新增院系','<div class="mb-2"><label class="form-label">院系名称</label><input id="dpName" class="form-control" value="'+(d?esc(d.name):'')+'"></div>'
+      +'<div class="mb-2"><label class="form-label">排序</label><input id="dpSort" type="number" class="form-control" value="'+(d?d.sort:0)+'"></div>',
+      [{t:'取消',c:'btn-light',x:true},{t:'保存',c:'btn-primary',act:()=>KS.deptSave(id)}]);
   };
-  App.deptSave=async function(){ const n=$('#dpName').value.trim(); if(!n){toast('请填名称','warn');return;} const res=await POST('/api/admin/departmentSave',{name:n}); res.code===0?toast('已保存'):toast(res.msg,'err'); if(res.code===0){hideModal();loadDeptsTable();} };
+  App.deptSave=async function(id){ const n=$('#dpName').value.trim(); if(!n){toast('请填名称','warn');return;} const payload={name:n,sort:parseInt($('#dpSort').value||0,10)}; if(id)payload.id=id; const res=await POST('/api/admin/departmentSave',payload); res.code===0?toast('已保存'):toast(res.msg,'err'); if(res.code===0){hideModal();loadDeptsTable();} };
   App.deptDel=async function(id,name){ if(!confirm('删除院系 '+name+'？'))return; const res=await POST('/api/admin/departmentDelete',{id}); res.code===0?(toast('已删除'),loadDeptsTable()):toast(res.msg,'err'); };
   async function loadTermsTable(){
     const tb=$('#termTbody'); if(!tb)return;
@@ -1842,18 +1975,22 @@
     const list=res.data||[];
     tb.innerHTML=list.map(c=>'<tr><td><b>'+esc(c.name)+'</b></td><td class="small">'+esc(c.teacher||'全校公共')+'</td><td>¥'+Number(c.price).toFixed(2)+'</td>'
       +'<td class="small">'+esc(c.classes)+'</td><td>'+c.lesson_count+'</td>'
-      +'<td><button class="btn btn-sm btn-outline-danger py-0" onclick="KS.adminCourseDel('+c.id+','+jsStr(c.name)+')">删</button></td></tr>').join('');
+      +'<td><button class="btn btn-sm btn-outline-secondary py-0" onclick="KS.adminCourseForm('+c.id+')">编辑</button> '
+      +'<button class="btn btn-sm btn-outline-danger py-0" onclick="KS.adminCourseDel('+c.id+','+jsStr(c.name)+')">删</button></td></tr>').join('');
   }
-  App.adminCourseForm=function(){
-    openModal('新增公共课程', `
-      <div class="mb-2"><label class="form-label">课程名称</label><input id="acName" class="form-control"></div>
-      <div class="mb-2"><label class="form-label">默认班级</label><input id="acClasses" class="form-control" placeholder="多班逗号分隔"></div>
-      <div class="mb-2"><label class="form-label">课时单价(元/节)</label><input id="acPrice" type="number" class="form-control"></div>`,
-      [{t:'取消',c:'btn-light',x:true},{t:'保存',c:'btn-primary',act:()=>KS.adminCourseSave()}]);
+  App.adminCourseForm=async function(id){
+    let c=null;
+    if(id){ const res=await GET('/api/admin/courses'); c=(res.code===0?(res.data||[]):[]).find(x=>x.id===id)||null; }
+    openModal(c?'编辑课程':'新增公共课程', `
+      <div class="mb-2"><label class="form-label">课程名称</label><input id="acName" class="form-control" value="${c?esc(c.name):''}"></div>
+      <div class="mb-2"><label class="form-label">默认班级</label><input id="acClasses" class="form-control" placeholder="多班逗号分隔" value="${c?esc(c.classes||''):''}"></div>
+      <div class="mb-2"><label class="form-label">课时单价(元/节)</label><input id="acPrice" type="number" class="form-control" value="${c?c.price:''}"></div>`,
+      [{t:'取消',c:'btn-light',x:true},{t:'保存',c:'btn-primary',act:()=>KS.adminCourseSave(id, c?c.teacher_id:0)}]);
   };
-  App.adminCourseSave=async function(){
+  App.adminCourseSave=async function(id, teacherId){
     const payload={ name:$('#acName').value.trim(), classes:$('#acClasses').value.trim(), price:parseFloat($('#acPrice').value||0), is_public:1 };
     if(!payload.name){toast('请填课程名','warn');return;}
+    if(id){ payload.id=id; payload.teacher_id=teacherId||0; }
     const res=await POST('/api/admin/courseSave',payload);
     if(res.code===0){toast('已保存');hideModal();loadAdminCoursesTable();refreshBootTerms();} else toast(res.msg,'err');
   };
@@ -1869,6 +2006,20 @@
     $('#cfUrl').value=s.ai_api_url||''; $('#cfKey').value=''; $('#cfModel').value=s.ai_model||'';
     $('#cfKeyStatus').textContent='系统 Key 状态：'+(s.ai_api_key_configured?'已配置（页面不显示明文）':'未配置');
   }
+  App.fetchSysModels=async function(){
+    const url=$('#cfUrl').value.trim(), key=$('#cfKey').value.trim();
+    if(!url){toast('请先填写系统模型接口地址','warn');return;}
+    toast('正在拉取模型列表…');
+    const res=await POST('/api/admin/aiModels',{api_url:url,api_key:key});
+    if(res.code!==0){toast(res.msg,'err');return;}
+    const models=(res.data&&res.data.models)||[];
+    const dl=$('#cfModelList'); if(!dl)return;
+    dl.innerHTML=models.map(m=>'<option value="'+esc(m)+'">').join('');
+    const inp=$('#cfModel');
+    if(inp && !inp.value && models.length) inp.value=models[0];
+    toast('已拉取 '+models.length+' 个模型，点击系统模型名称输入框可下拉选择');
+    if(inp) inp.focus();
+  };
   App.saveSettings=async function(){
     const payload={ school_name:$('#cfSchool').value.trim(), global_price:$('#cfPrice').value, week_standard_periods:$('#cfStd').value,
       ai_enabled:$('#cfAi').value, ai_provider:$('#cfProv').value.trim(), ai_api_url:$('#cfUrl').value.trim(), ai_model:$('#cfModel').value.trim(),
@@ -1965,6 +2116,10 @@
           </div>
           <div id="udResult" class="mt-3"></div>
         </div></div>
+        <div class="card mb-3"><div class="card-h"><i class="bi bi-archive text-primary"></i><span class="tt">备份与回滚</span>
+          <div class="flex-grow-1"></div><button class="btn btn-sm btn-outline-danger" id="udRollbackBtn" onclick="KS.updateRollback()"><i class="bi bi-arrow-counterclockwise me-1"></i>回滚上一版本</button></div>
+          <div class="table-responsive" style="max-height:260px;overflow:auto"><table class="table"><thead><tr><th>类型</th><th>时间</th><th>版本</th><th>内容</th><th class="text-end">大小</th></tr></thead><tbody id="udBackupTbody"></tbody></table></div>
+          <div class="card-b small text-muted" style="padding-top:0">回滚将用最近一次文件备份还原代码，并按备份时的版本号回退；若更新包含 <code>downgrade.sql</code> 会同步回退表结构。备份最多保留最近 5 份。</div></div>
       </div>
       <div class="col-12 col-lg-5">
         <div class="card"><div class="card-h"><i class="bi bi-shield-check text-primary"></i><span class="tt">更新说明与安全</span></div>
@@ -1979,6 +2134,7 @@
     </div>`;
     updateLoadStatus();
   };
+  function fmtSize(b){ b=Number(b)||0; if(b>=1048576)return (b/1048576).toFixed(1)+' MB'; if(b>=1024)return (b/1024).toFixed(1)+' KB'; return b+' B'; }
   async function updateLoadStatus(){
     const res=await GET('/api/admin/updateStatus');
     if(res.code!==0){ if($('#udCurrent')) $('#udCurrent').textContent='—'; return; }
@@ -1986,6 +2142,17 @@
     if($('#udCurrent')) $('#udCurrent').textContent=d.current_version||'—';
     if($('#udManifest')) $('#udManifest').value=d.manifest_url||'';
     if($('#udMaintBtn')) $('#udMaintBtn').textContent=d.maintenance?'维护中(关闭)':'进入维护模式';
+    const rb=$('#udRollbackBtn'); if(rb) rb.disabled=!d.can_rollback;
+    const tb=$('#udBackupTbody');
+    if(tb){
+      const list=d.backups||[];
+      tb.innerHTML=list.length?list.map(b=>'<tr><td>'+(b.type==='db'?'<span class="badge bg-info">数据库</span>':'<span class="badge bg-secondary">文件</span>')+'</td>'
+        +'<td class="small">'+esc(b.time||'')+'</td>'
+        +'<td>'+(b.type==='files'&&b.version?'v'+esc(b.version):'—')+'</td>'
+        +'<td class="small">'+b.files+' 个文件</td>'
+        +'<td class="text-end small">'+fmtSize(b.size)+'</td></tr>').join('')
+        :'<tr><td colspan="5" class="text-center text-muted">暂无备份，首次升级时会自动创建</td></tr>';
+    }
     setUdBusy(false);
   }
   function setUdBusy(busy){
@@ -2036,6 +2203,18 @@
       +'<div class="small mt-1">备份文件 '+((d.backup&&d.backup.files)||0)+' 个；数据库备份 '+((d.db_backup&&d.db_backup.tables)||0)+' 表。</div>'
       +'<div class="small mt-1 text-muted">建议刷新页面确认新版生效。</div>','alert-success');
     if($('#udCurrent')) $('#udCurrent').textContent=(d.to||'');
+    updateLoadStatus();
+  };
+  App.updateRollback=async function(){
+    if(!confirm('确定回滚到上一版本？将用最近一次文件备份还原代码并回退版本号，期间进入短暂维护模式。')) return;
+    const rb=$('#udRollbackBtn'); if(rb) rb.disabled=true;
+    setUdBusy(true); udOut('<i class="bi bi-hourglass-split me-1"></i>正在回滚…','alert-warning');
+    const res=await POST('/api/admin/updateRollback',{});
+    setUdBusy(false);
+    if(res.code!==0){ udOut('<i class="bi bi-x-octagon me-1"></i>'+esc(res.msg),'alert-danger'); updateLoadStatus(); return; }
+    const d=res.data||{};
+    udOut('<i class="bi bi-check-circle me-1"></i><b>回滚完成</b> v'+esc(d.from||'')+' → v'+esc(d.to||'')
+      +'<div class="small mt-1">还原文件 '+(d.restored_files||0)+' 个。建议刷新页面确认系统状态。</div>','alert-success');
     updateLoadStatus();
   };
   App.maintenanceToggle=async function(){
@@ -2092,12 +2271,15 @@
     $('#bsBody').innerHTML = body;
     _modalActions = [];
     let f = '';
-    (footerBtns || []).forEach((b, idx) => {
+    (footerBtns || []).forEach((b) => {
       if (b.x) {
         f += '<button type="button" class="btn ' + b.c + ' btn-sm" data-bs-dismiss="modal">' + esc(b.t) + '</button>';
       } else {
+        // 关键：data-act 必须用 _modalActions 的真实下标，
+        // 前面有取消(x)按钮时 footerBtns 下标会错位，导致保存点了没反应
+        const actIdx = _modalActions.length;
         _modalActions.push(b.act);
-        f += '<button class="btn ' + b.c + ' btn-sm ms-1" data-act="' + idx + '">' + esc(b.t) + '</button>';
+        f += '<button class="btn ' + b.c + ' btn-sm ms-1" data-act="' + actIdx + '">' + esc(b.t) + '</button>';
       }
     });
     f += '<button type="button" class="btn btn-link btn-sm ms-2" data-bs-dismiss="modal">取消</button>';

@@ -16,16 +16,52 @@ html,body{height:100%}
 body{margin:0;background:var(--bg);font-family:-apple-system,"Segoe UI","Microsoft YaHei",Roboto,sans-serif;color:#1e293b}
 a{text-decoration:none;color:inherit}
 
-/* ---------- 登录页 ---------- */
-#loginView{display:flex;min-height:100vh;align-items:center;justify-content:center;
-  background:linear-gradient(135deg,#1e3a8a 0%,#2563eb 55%,#38bdf8 100%);}
-.login-card{width:400px;max-width:92vw;background:#fff;border-radius:18px;padding:34px 34px 26px;
-  box-shadow:0 24px 60px rgba(2,6,23,.35)}
-.login-card h1{font-size:22px;font-weight:700;color:#0f172a;margin:0}
-.login-card .sub{color:#64748b;font-size:13px;margin:4px 0 20px}
+/* ---------- 登录 / 注册（分屏布局） ---------- */
+.auth-wrap{display:flex;min-height:100vh}
+.auth-brand{width:440px;flex-shrink:0;position:relative;overflow:hidden;color:#fff;
+  background:linear-gradient(160deg,#1e3a8a 0%,#2563eb 55%,#0ea5e9 115%);
+  display:flex;flex-direction:column;justify-content:space-between;padding:46px 44px 28px}
+.auth-brand::before,.auth-brand::after{content:'';position:absolute;border-radius:50%;background:rgba(255,255,255,.07)}
+.auth-brand::before{width:360px;height:360px;top:-100px;right:-120px}
+.auth-brand::after{width:220px;height:220px;bottom:10%;left:-90px;background:rgba(255,255,255,.05)}
+.brand-logo{display:flex;align-items:center;gap:11px;font-size:19px;font-weight:700;position:relative;z-index:1}
+.brand-logo .lg-ic{width:38px;height:38px;border-radius:11px;background:rgba(255,255,255,.16);
+  display:flex;align-items:center;justify-content:center;font-size:19px}
+.brand-body{position:relative;z-index:1;margin:auto 0;padding:36px 0}
+.brand-body h2{font-size:28px;font-weight:800;line-height:1.4;margin:0 0 12px}
+.brand-body>p{color:rgba(255,255,255,.78);font-size:14px;margin:0 0 26px}
+.brand-feats{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:13px}
+.brand-feats li{display:flex;align-items:center;gap:10px;font-size:13.5px;color:rgba(255,255,255,.92)}
+.brand-feats i{color:#7dd3fc;font-size:16px}
+.brand-foot{position:relative;z-index:1;font-size:12px;color:rgba(255,255,255,.55)}
+.auth-main{flex:1;display:flex;align-items:center;justify-content:center;padding:28px 20px;min-width:0;background:#f1f5f9}
+.auth-card{width:400px;max-width:100%;animation:authUp .38s ease both}
+@keyframes authUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.auth-card h1{font-size:24px;font-weight:800;color:#0f172a;margin:0}
+.auth-card .sub{color:#64748b;font-size:13.5px;margin:6px 0 22px}
+.i-group{position:relative}
+.i-group>i{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:#94a3b8;font-size:16px;pointer-events:none}
+.i-group .form-control{padding-left:40px;height:46px;font-size:14.5px;border-radius:10px}
+.i-group .pwd-eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:none;
+  color:#94a3b8;font-size:16px;padding:6px 9px;cursor:pointer}
+.i-group .pwd-eye:hover{color:#2563eb}
+.field-err{color:#dc2626;font-size:12px;min-height:18px;line-height:18px;margin:1px 2px 2px;visibility:hidden}
+.field-err.show{visibility:visible}
+.pwd-str{font-size:12px;color:#64748b;min-height:18px;line-height:18px;margin:1px 2px 2px}
+.caps-tip{display:none;color:#b45309;font-size:12px;margin:0 2px 2px}
+.caps-tip.show{display:block}
+.btn-auth{height:46px;font-size:15px;font-weight:600;letter-spacing:.14em;border-radius:10px;border:0;
+  background:linear-gradient(135deg,#2563eb,#1d4ed8);box-shadow:0 8px 18px rgba(37,99,235,.26);transition:.15s}
+.btn-auth:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 10px 22px rgba(37,99,235,.34);
+  background:linear-gradient(135deg,#2563eb,#1e40af)}
+.btn-auth:disabled{opacity:.75}
+.auth-alt{font-size:13.5px;color:#64748b}
+.auth-alt a{color:#2563eb;font-weight:600;text-decoration:none}
+.auth-alt a:hover{text-decoration:underline}
 .demo{background:#f8fafc;border:1px dashed #cbd5e1;border-radius:10px;padding:10px 14px;
-  font-size:12.5px;color:#475569;margin:18px 0 4px;line-height:1.9}
+  font-size:12.5px;color:#475569;margin:16px 0 4px;line-height:1.9}
 .demo b{color:#0f172a}
+@media (max-width:900px){.auth-brand{display:none}}
 .toast-wrap{position:fixed;top:18px;right:18px;z-index:3000;display:flex;flex-direction:column;gap:8px;max-width:360px}
 .wt{background:#0f172a;color:#fff;padding:11px 16px;border-radius:10px;font-size:13.5px;
   box-shadow:0 10px 24px rgba(0,0,0,.18);display:flex;gap:10px;align-items:flex-start;opacity:0;
@@ -200,45 +236,95 @@ a{text-decoration:none;color:inherit}
 <body>
 
 <!-- 登录 -->
-<div id="loginView">
-  <form class="login-card" onsubmit="return KS.login(event)">
-    <div style="display:flex;align-items:center;gap:12px">
-      <div style="width:46px;height:46px;border-radius:12px;background:linear-gradient(135deg,#38bdf8,#2563eb);color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px"><i class="bi bi-mortarboard-fill"></i></div>
-      <div><h1>课时通</h1><div class="sub">多教师课时统计 · 自动课酬核算</div></div>
+<div class="auth-wrap" id="loginView">
+  <div class="auth-brand">
+    <div class="brand-logo"><span class="lg-ic"><i class="bi bi-mortarboard-fill"></i></span>课时通</div>
+    <div class="brand-body">
+      <h2>多教师课时统计<br>与课酬核算系统</h2>
+      <p>排课 → 记录 → 统计 → 核算 → 导出，一站闭环</p>
+      <ul class="brand-feats">
+        <li><i class="bi bi-check2-circle"></i>课时全生命周期管理，防重防漏</li>
+        <li><i class="bi bi-check2-circle"></i>课酬自动核算，价格快照防串账</li>
+        <li><i class="bi bi-check2-circle"></i>可视化统计 · 全校看板 · 月度对账</li>
+        <li><i class="bi bi-check2-circle"></i>AI 助手问答，课表粘贴智能解析</li>
+      </ul>
     </div>
-    <label class="form-label mt-2">登录账号</label>
-    <input id="lgUser" class="form-control form-control-lg" placeholder="请输入账号" autocomplete="username" required>
-    <label class="form-label mt-3">密码</label>
-    <input id="lgPwd" type="password" class="form-control form-control-lg" placeholder="请输入密码" autocomplete="current-password" required>
-    <button id="lgBtn" type="submit" class="btn btn-primary btn-lg w-100 mt-4">登 录</button>
-    <div class="demo">
-      <b>首次登录</b>：使用安装时设置的管理员账号<br>
-      <span style="color:#94a3b8">（演示账号仅在全新安装时由种子数据生成）</span>
-    </div>
-    <div class="text-center mt-3" style="font-size:14px">
-      还没有账号？<a href="#" onclick="KS.showRegister();return false" style="color:#2563eb;text-decoration:none">立即注册</a>
-    </div>
-  </form>
+    <div class="brand-foot">课时通 · 为中等职业学校而生</div>
+  </div>
+  <div class="auth-main">
+    <form class="auth-card" onsubmit="return KS.login(event)" novalidate>
+      <h1>欢迎回来</h1>
+      <div class="sub">登录课时通，开始今天的课时管理</div>
+      <label class="form-label" for="lgUser">登录账号</label>
+      <div class="i-group">
+        <i class="bi bi-person"></i>
+        <input id="lgUser" class="form-control" placeholder="请输入账号" autocomplete="username">
+      </div>
+      <div class="field-err" id="lgUserErr"></div>
+      <label class="form-label" for="lgPwd">密码</label>
+      <div class="i-group">
+        <i class="bi bi-lock"></i>
+        <input id="lgPwd" type="password" class="form-control" placeholder="请输入密码" autocomplete="current-password"
+          onkeyup="KS.capsTip(event,'lgCaps')">
+        <button type="button" class="pwd-eye" onclick="KS.togglePwd('lgPwd',this)" tabindex="-1"><i class="bi bi-eye"></i></button>
+      </div>
+      <div class="field-err" id="lgPwdErr"></div>
+      <div class="caps-tip" id="lgCaps"><i class="bi bi-exclamation-triangle me-1"></i>大写锁定已开启</div>
+      <button id="lgBtn" type="submit" class="btn btn-primary btn-auth w-100 mt-2">登 录</button>
+      <div class="demo">
+        <b>首次登录</b>：使用安装时设置的管理员账号<br>
+        <span style="color:#94a3b8">教师可自助注册，管理员启用后即可登录</span>
+      </div>
+      <div class="text-center mt-3 auth-alt">还没有账号？<a href="#" onclick="KS.showRegister();return false">立即注册</a></div>
+    </form>
+  </div>
 </div>
 
 <!-- 注册 -->
-<div id="registerView" style="display:none">
-  <form class="login-card" onsubmit="return KS.register(event)">
-    <div style="display:flex;align-items:center;gap:12px">
-      <div style="width:46px;height:46px;border-radius:12px;background:linear-gradient(135deg,#38bdf8,#2563eb);color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px"><i class="bi bi-person-plus-fill"></i></div>
-      <div><h1>教师注册</h1><div class="sub">注册后需等待管理员启用</div></div>
+<div class="auth-wrap" id="registerView" style="display:none">
+  <div class="auth-brand">
+    <div class="brand-logo"><span class="lg-ic"><i class="bi bi-mortarboard-fill"></i></span>课时通</div>
+    <div class="brand-body">
+      <h2>加入课时通<br>告别手工算课时</h2>
+      <p>注册教师账号，课时记录、统计、课酬一手掌握</p>
+      <ul class="brand-feats">
+        <li><i class="bi bi-check2-circle"></i>快速录入：模板复用 · 周次批量生成</li>
+        <li><i class="bi bi-check2-circle"></i>个人仪表盘：本月 / 累计课时课酬</li>
+        <li><i class="bi bi-check2-circle"></i>周视图课表日历，一目了然</li>
+        <li><i class="bi bi-check2-circle"></i>数据隔离，教师仅见自己的课时</li>
+      </ul>
     </div>
-    <label class="form-label mt-2">登录账号</label>
-    <input id="rgUser" class="form-control form-control-lg" placeholder="3-32 位字母/数字/下划线" autocomplete="username" required>
-    <label class="form-label mt-3">密码</label>
-    <input id="rgPwd" type="password" class="form-control form-control-lg" placeholder="8-72 位" autocomplete="new-password" required>
-    <label class="form-label mt-3">真实姓名</label>
-    <input id="rgName" class="form-control form-control-lg" placeholder="2-32 个字符" required>
-    <button id="rgBtn" type="submit" class="btn btn-primary btn-lg w-100 mt-4">注 册</button>
-    <div class="text-center mt-3" style="font-size:14px">
-      已有账号？<a href="#" onclick="KS.showLogin();return false" style="color:#2563eb;text-decoration:none">返回登录</a>
-    </div>
-  </form>
+    <div class="brand-foot">注册后需管理员启用账号</div>
+  </div>
+  <div class="auth-main">
+    <form class="auth-card" onsubmit="return KS.register(event)" novalidate>
+      <h1>教师注册</h1>
+      <div class="sub">注册提交后需等待管理员启用账号</div>
+      <label class="form-label" for="rgUser">登录账号</label>
+      <div class="i-group">
+        <i class="bi bi-person"></i>
+        <input id="rgUser" class="form-control" placeholder="3-32 位字母 / 数字 / 下划线" autocomplete="username">
+      </div>
+      <div class="field-err" id="rgUserErr"></div>
+      <label class="form-label" for="rgPwd">密码</label>
+      <div class="i-group">
+        <i class="bi bi-lock"></i>
+        <input id="rgPwd" type="password" class="form-control" placeholder="8-72 位，建议字母+数字组合" autocomplete="new-password"
+          oninput="KS.pwdStrength()" onkeyup="KS.capsTip(event,'rgCaps')">
+        <button type="button" class="pwd-eye" onclick="KS.togglePwd('rgPwd',this)" tabindex="-1"><i class="bi bi-eye"></i></button>
+      </div>
+      <div class="pwd-str" id="rgPwdStr"></div>
+      <div class="caps-tip" id="rgCaps"><i class="bi bi-exclamation-triangle me-1"></i>大写锁定已开启</div>
+      <label class="form-label" for="rgName">真实姓名</label>
+      <div class="i-group">
+        <i class="bi bi-person-badge"></i>
+        <input id="rgName" class="form-control" placeholder="2-32 个字符，用于课时记录署名">
+      </div>
+      <div class="field-err" id="rgNameErr"></div>
+      <button id="rgBtn" type="submit" class="btn btn-primary btn-auth w-100 mt-2">注 册</button>
+      <div class="text-center mt-3 auth-alt">已有账号？<a href="#" onclick="KS.showLogin();return false">返回登录</a></div>
+    </form>
+  </div>
 </div>
 
 <!-- 应用 -->
@@ -300,10 +386,10 @@ a{text-decoration:none;color:inherit}
 </div>
 
 <div class="toast-wrap" id="toastWrap"></div>
-<button class="fab" id="fabQuick" title="快速录入" onclick="KS.quickOpen()"><i class="bi bi-plus-lg"></i></button>
+<button class="fab hidden" id="fabQuick" title="快速录入" onclick="KS.quickOpen()"><i class="bi bi-plus-lg"></i></button>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script src="static/app/app.js"></script>
+<script src="static/app/app.js?v=20260907d"></script>
 </body>
 </html>

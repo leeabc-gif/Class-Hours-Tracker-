@@ -106,6 +106,97 @@ class AiConfig
             && trim((string)$config['key']) !== '' && trim((string)$config['model']) !== '';
     }
 
+    /**
+     * 当前用户已保存的自定义 Key 明文（仅服务端内部使用，绝不出接口）
+     */
+    public static function plainKeyForUser($teacherId)
+    {
+        $row = TeacherAiConfig::forUser($teacherId);
+        return $row ? self::decryptKey((string)$row->api_key) : '';
+    }
+
+    /**
+     * 从 OpenAI 兼容接口拉取模型列表（GET {base}/models）
+     *
+     * @param string $chatUrl 对话接口地址（…/v1/chat/completions），自动推导 /models 地址
+     * @param string $key     API Key（调用方负责兜底已保存的 Key）
+     * @return array ['ok'=>bool, 'msg'=>'', 'models'=>[]]
+     */
+    public static function fetchModels($chatUrl, $key)
+    {
+        $chatUrl = trim((string)$chatUrl);
+        if ($chatUrl === '' || !preg_match('#^https?://#i', $chatUrl)) {
+            return ['ok' => false, 'msg' => '请先填写接口地址（须以 http:// 或 https:// 开头）', 'models' => []];
+        }
+        if (strlen($chatUrl) > 500) {
+            return ['ok' => false, 'msg' => '接口地址过长', 'models' => []];
+        }
+        $key = trim((string)$key);
+        if ($key === '') {
+            return ['ok' => false, 'msg' => '请填写 API Key（或先保存一次配置后再拉取）', 'models' => []];
+        }
+        if (!function_exists('curl_init')) {
+            return ['ok' => false, 'msg' => '当前 PHP 未启用 curl 扩展', 'models' => []];
+        }
+
+        $modelsUrl = self::modelsUrlFrom($chatUrl);
+        $ch = curl_init($modelsUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $key],
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT        => 15,
+            CURLOPT_MAXREDIRS      => 3,
+            CURLOPT_SSL_VERIFYPEER => true,
+        ]);
+        $resp = curl_exec($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $err = curl_error($ch);
+        curl_close($ch);
+
+        if ($err !== '') {
+            return ['ok' => false, 'msg' => '请求模型列表失败：' . $err, 'models' => []];
+        }
+        if ($httpCode < 200 || $httpCode >= 300) {
+            return ['ok' => false, 'msg' => '接口返回 HTTP ' . $httpCode . '，请检查接口地址与 Key', 'models' => []];
+        }
+        if (!is_string($resp) || strlen($resp) > 2097152) {
+            return ['ok' => false, 'msg' => '模型列表响应异常', 'models' => []];
+        }
+        $json = json_decode($resp, true);
+        if (!is_array($json) || !isset($json['data']) || !is_array($json['data'])) {
+            return ['ok' => false, 'msg' => '返回内容不是 OpenAI 兼容的模型列表格式', 'models' => []];
+        }
+        $ids = [];
+        foreach ($json['data'] as $m) {
+            if (is_array($m) && !empty($m['id'])) {
+                $ids[] = (string) $m['id'];
+            }
+        }
+        $ids = array_values(array_unique($ids));
+        sort($ids, SORT_STRING);
+        if (!$ids) {
+            return ['ok' => false, 'msg' => '该接口未返回任何模型', 'models' => []];
+        }
+        return ['ok' => true, 'msg' => '', 'models' => $ids];
+    }
+
+    /**
+     * 由对话接口地址推导模型列表地址：
+     *   …/v1/chat/completions → …/v1/models
+     *   …/v1（或其他 base）  → …/v1/models
+     */
+    private static function modelsUrlFrom($url)
+    {
+        if (preg_match('#/chat/completions/?$#i', $url)) {
+            return preg_replace('#/chat/completions/?$#i', '/models', $url);
+        }
+        if (preg_match('#/models/?$#i', $url)) {
+            return $url;
+        }
+        return rtrim($url, '/') . '/models';
+    }
+
     private static function normalize($config)
     {
         $config['url'] = trim((string)$config['url']);

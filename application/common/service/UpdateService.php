@@ -131,7 +131,9 @@ class UpdateService
     // ---------------------------------------------------------------
 
     /**
-     * 备份将被 zip 覆盖的文件，返回备份路径
+     * 备份将被 zip 覆盖的文件，返回备份路径。
+     * 备份集与 extractWhitelisted 的覆盖集口径一致（白名单 ∩ 非保护 ∩ 本地已存在），
+     * 并在备份目录写 _meta.json 记录备份时版本，供回滚后恢复版本号。
      */
     public static function backup($zipPath)
     {
@@ -148,7 +150,7 @@ class UpdateService
         $backed = 0;
         foreach ($files as $entry) {
             $rel = self::normalizeEntry($entry);
-            if ($rel === '' || self::isProtected($rel)) {
+            if ($rel === '' || self::isProtected($rel) || !self::inAllowlist($rel)) {
                 continue;
             }
             $targetAbs = self::safeTargetAbs($rel);
@@ -165,6 +167,12 @@ class UpdateService
             }
         }
         $zip->close();
+        // 元信息：回滚时据此恢复 app_version，避免文件回了版本号没回
+        @file_put_contents($backDir . DIRECTORY_SEPARATOR . '_meta.json', json_encode([
+            'version' => self::currentVersion(),
+            'time'    => date('c'),
+            'files'   => $backed,
+        ], JSON_UNESCAPED_UNICODE));
         return ['dir' => $backDir, 'files' => $backed];
     }
 
@@ -335,9 +343,18 @@ class UpdateService
         $fileBackups = glob($base . DIRECTORY_SEPARATOR . 'files_*');
         sort($fileBackups);
         $restored = 0;
+        $restoredVersion = '';
         // 取最近一份文件备份还原
         if ($fileBackups) {
             $dir = array_pop($fileBackups);
+            // 读取备份时记录的版本号，还原完成后回写，避免"文件回了版本号没回"
+            $metaFile = $dir . DIRECTORY_SEPARATOR . '_meta.json';
+            if (is_file($metaFile)) {
+                $meta = json_decode((string) file_get_contents($metaFile), true);
+                if (is_array($meta) && !empty($meta['version'])) {
+                    $restoredVersion = (string) $meta['version'];
+                }
+            }
             $it = new \RecursiveIteratorIterator(
                 new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS)
             );
@@ -347,6 +364,9 @@ class UpdateService
                 }
                 $rel = substr($file->getPathname(), strlen($dir) + 1);
                 $rel = str_replace(DIRECTORY_SEPARATOR, '/', $rel);
+                if ($rel === '_meta.json' || !self::inAllowlist($rel) || self::isProtected($rel)) {
+                    continue;
+                }
                 $targetAbs = self::safeTargetAbs($rel);
                 if ($targetAbs === '') {
                     continue;
@@ -358,6 +378,9 @@ class UpdateService
                 if (@copy($file->getPathname(), $targetAbs)) {
                     $restored++;
                 }
+            }
+            if ($restoredVersion !== '') {
+                Setting::set('app_version', $restoredVersion);
             }
         }
         // 执行 downgrade.sql（若提供 zip 且内含）
@@ -374,7 +397,129 @@ class UpdateService
                 }
             }
         }
-        return ['restored_files' => $restored];
+        return ['restored_files' => $restored, 'restored_version' => $restoredVersion];
+    }
+
+    // ---------------------------------------------------------------
+    // 备份清单 / 裁剪 / 包清理 / 环境预检
+    // ---------------------------------------------------------------
+
+    /**
+     * 是否存在可用的文件备份（决定"回滚"按钮是否可用）
+     */
+    public static function hasFileBackup()
+    {
+        $base = self::rootPath() . self::BACKUP_DIR;
+        return (bool) glob($base . DIRECTORY_SEPARATOR . 'files_*');
+    }
+
+    /**
+     * 列出全部备份（文件备份 + 数据库备份），新的在前
+     * @return array
+     */
+    public static function listBackups()
+    {
+        $base = self::rootPath() . self::BACKUP_DIR;
+        $out  = [];
+        foreach (['files', 'db'] as $type) {
+            $dirs = glob($base . DIRECTORY_SEPARATOR . $type . '_*') ?: [];
+            rsort($dirs); // 目录名含时间戳，字典序即时间序
+            foreach ($dirs as $dir) {
+                $stat = self::dirStat($dir);
+                $item = [
+                    'type'  => $type,
+                    'dir'   => basename($dir),
+                    'time'  => self::backupDirTime(basename($dir)),
+                    'files' => $stat['files'],
+                    'size'  => $stat['size'],
+                ];
+                if ($type === 'files') {
+                    $metaFile = $dir . DIRECTORY_SEPARATOR . '_meta.json';
+                    $meta = is_file($metaFile) ? json_decode((string) file_get_contents($metaFile), true) : null;
+                    $item['version'] = is_array($meta) && !empty($meta['version']) ? (string) $meta['version'] : '';
+                }
+                $out[] = $item;
+            }
+        }
+        // 混合后按时间倒序
+        usort($out, function ($a, $b) {
+            return strcmp($b['dir'], $a['dir']);
+        });
+        return $out;
+    }
+
+    /**
+     * 裁剪旧备份：files_* 与 db_* 各保留最近 MAX_BACKUPS 份
+     * @return int 删除的备份目录数
+     */
+    public static function pruneBackups()
+    {
+        $base = self::rootPath() . self::BACKUP_DIR;
+        $removed = 0;
+        foreach (['files', 'db'] as $type) {
+            $dirs = glob($base . DIRECTORY_SEPARATOR . $type . '_*') ?: [];
+            sort($dirs); // 旧 → 新
+            $excess = count($dirs) - self::MAX_BACKUPS;
+            for ($i = 0; $i < $excess; $i++) {
+                self::removeDir($dirs[$i]);
+                $removed++;
+            }
+        }
+        return $removed;
+    }
+
+    /**
+     * 清理 runtime/updates 下下载过的更新包，保留最新 N 个
+     * （最近一个可能在回滚时用于执行 downgrade.sql，别全删）
+     */
+    public static function cleanupPackages($keep = 3)
+    {
+        $files = glob(self::packageDir() . DIRECTORY_SEPARATOR . 'keshi-*') ?: [];
+        usort($files, function ($a, $b) {
+            return filemtime($a) - filemtime($b); // 旧 → 新
+        });
+        $removed = 0;
+        $excess = count($files) - max(1, (int) $keep);
+        for ($i = 0; $i < $excess; $i++) {
+            if (@unlink($files[$i])) {
+                $removed++;
+            }
+        }
+        return $removed;
+    }
+
+    /**
+     * 最近一次下载的更新包路径（可能内含 downgrade.sql）；无则返回空串
+     */
+    public static function latestPackage()
+    {
+        $files = glob(self::packageDir() . DIRECTORY_SEPARATOR . 'keshi-*') ?: [];
+        if (!$files) {
+            return '';
+        }
+        usort($files, function ($a, $b) {
+            return filemtime($b) - filemtime($a);
+        });
+        return $files[0];
+    }
+
+    /**
+     * 升级前环境预检：PHP 版本下限 / 起始版本要求，不满足直接拒绝
+     * @param array $info UpdateService::check() 的返回
+     */
+    public static function assertEnvCompatible(array $info)
+    {
+        if (!empty($info['min_php']) && version_compare(PHP_VERSION, (string) $info['min_php'], '<')) {
+            throw new \RuntimeException(
+                '新版要求 PHP ≥ ' . $info['min_php'] . '，当前为 ' . PHP_VERSION . '，请先升级 PHP。');
+        }
+        if (!empty($info['from_version'])) {
+            $current = self::currentVersion();
+            if (version_compare($current, (string) $info['from_version'], '<')) {
+                throw new \RuntimeException(
+                    '该更新包要求从 v' . $info['from_version'] . ' 起升，当前 v' . $current . ' 跨度过大，请先升到中间版本。');
+            }
+        }
     }
 
     // ---------------------------------------------------------------
@@ -431,6 +576,64 @@ class UpdateService
         if (!is_writable($dir)) {
             throw new \RuntimeException('目录不可写：' . $dir);
         }
+    }
+
+    /**
+     * 统计目录下的文件数与总字节
+     */
+    protected static function dirStat($dir)
+    {
+        $files = 0;
+        $size  = 0;
+        if (!is_dir($dir)) {
+            return ['files' => 0, 'size' => 0];
+        }
+        $it = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS)
+        );
+        foreach ($it as $file) {
+            if ($file->isFile()) {
+                $files++;
+                $size += $file->getSize();
+            }
+        }
+        return ['files' => $files, 'size' => $size];
+    }
+
+    /**
+     * 从备份目录名（files_20260907_190000）解析出可读时间
+     */
+    protected static function backupDirTime($name)
+    {
+        if (preg_match('/_(\d{8})_(\d{6})$/', $name, $m)) {
+            $t = strtotime($m[1] . ' ' . $m[2]);
+            if ($t !== false) {
+                return date('Y-m-d H:i:s', $t);
+            }
+        }
+        return $name;
+    }
+
+    /**
+     * 递归删除目录（仅限备份目录内部使用，调用方保证路径来源可信）
+     */
+    protected static function removeDir($dir)
+    {
+        if (!is_dir($dir)) {
+            return;
+        }
+        $it = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST
+        );
+        foreach ($it as $file) {
+            if ($file->isDir()) {
+                @rmdir($file->getPathname());
+            } else {
+                @unlink($file->getPathname());
+            }
+        }
+        @rmdir($dir);
     }
 
     protected static function validateRemoteUrl($url, $label)
