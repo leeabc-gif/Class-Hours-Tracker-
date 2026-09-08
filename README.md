@@ -51,17 +51,20 @@
 
 ## 📦 最近更新
 
-**2026-09 更新：AI 模型拉取 + 在线更新可回滚**
+**2026-09（v1.0.1）· 在线更新安全加固 + 系统参数持久化**
 
-- 🤖 **AI 配置增强**：
-  - 管理员后台与教师个人设置均支持**一键拉取模型列表**（`GET {base}/models`，OpenAI 兼容）
-  - 自动由对话接口地址推导模型列表地址（`…/chat/completions` → `…/models`），可选模型实时填充，无需手填
-- 🗂️ **在线更新更安全**：
-  - 升级失败时**自动回滚**文件与 SQL；回滚失败会显式告警，绝不静默
-  - 新增**手动回滚**：基于最近一次文件备份一键还原，并按备份元信息 `_meta.json` 回写版本号
-  - 备份列表统一管理（文件备份 + 数据库备份），自动裁剪旧备份、清理历史更新包，避免磁盘无限堆积
-  - 升级前环境兼容性预检（`assertEnvCompatible`）
-- 🎨 **界面优化**：登录 / 注册页视觉升级，后台新增「拉取模型」「回滚」操作入口
+- 🛡️ **CSRF 防护真上线**：新增全局 `CsrfVerify` 中间件，所有 `POST/PUT/DELETE/PATCH` 必须携带 `X-CSRF-Token`；前端 `api()` 自动注入；登录页白名单；`Cookie` 增加 `HttpOnly` + `SameSite=Lax`；遇 419 自动重新拉取 token
+- 🛡️ **SSRF 防护升级**：`UpdateService::httpGet` 用 `CURLOPT_RESOLVE` 锁解析结果（防 DNS rebinding / TOCTOU），`CURLOPT_PROTOCOLS` 仅允许 HTTP/HTTPS，关闭 302 跟随或对跳转目标重跑 SSRF
+- 🛡️ **维护模式不卡死**：写入 `runtime/maintenance.flag` 用 `LOCK_EX`；注册 `register_shutdown_function` 兜底关闭，避免 PHP fatal 跳过 `finally` 导致永久锁死
+- 🛡️ **维护拦截不再泄露状态**：从 `Base::initialize` 移入 `requireLogin/requireAdmin` 之后，仅对已登录用户返 503，附带 `Retry-After` 头
+- 🛡️ **Manifest 多包拒绝**：`UpdateService::check` 强制 `files.length ≤ 1`，杜绝任意第二个文件绕过 sha256 白名单
+- 💾 **系统参数持久化**：「基础配置」页正式提供 **更新清单地址 `update_manifest_url`** 字段；`settingsSave` 加严格 https + 长度 + SSRF 预校验
+- 💾 **备份可靠性提升**：`Backup::dump` 在 `SHOW CREATE TABLE` 失败 / 视图 / 权限不足时**直接抛错**，不再静默生成无 DDL 的半成品 SQL；列名加反引号 + ` 转移
+- 💾 **回滚可读性**：拆分 `restored_files` 与 `removed_new_files` 两项返回，前端分别展示「已还原文件」「已删除新文件」
+- 📋 **更新状态可观察**：`updateStatus` 携带上次检查缓存的 `latest_version` / `last_check_at` / `php_version` / `app_version_baseline`；前端在「系统更新」页直接显示，无需每次点「检查更新」
+- 📂 **新增 manifest.json 样例** `docs/manifest.example.json`，发布方可照着签名
+- 🧹 **日志统一**：原 `runtime/debug_upd.txt` 裸堆栈全部改走 `Log::error`；SQL 错误回显改为行号 + 错误码，不再外泄 DDL 片段
+- 🛠️ **补丁模式细节**：文件覆盖保留原 `fileperms`（`0755` 脚本不再被强制 `0644`）；备份 > 256MB 触发告警；`runtime/.htaccess` 增加 Apache 兜底防护
 
 ## 🖥️ 界面一览
 
@@ -140,6 +143,15 @@ php -S 127.0.0.1:8000 -t public public/router.php
 - **课程下拉没有想要的？** 支持自定义课程，录完后不入课程库。
 - **改密码会串课酬？** 每笔课时保存了价格快照，改单价不影响历史记录。
 
+## 🔐 安全说明（v1.0.1 起）
+
+- **CSRF**：所有写接口强制校验 `X-CSRF-Token`，登录/注册/install/取 token 本身白名单；遇 419 自动重取
+- **SSRF**：在线更新仅允许 https，DNS 解析结果用 `CURLOPT_RESOLVE` 锁死；302 跟随被禁用；`CURLOPT_PROTOCOLS` 仅允许 HTTP/HTTPS
+- **维护模式**：进入/退出维护都走 `runtime/maintenance.flag`，PHP fatal 时由 `register_shutdown_function` 兜底关闭
+- **回滚**：最近一份文件备份 + 备份元信息 `_meta.json` 中的版本号，回滚后 `app_version` 一起回退
+- **回滚日志**：所有回滚写 `ks_operation_log`，含 from/to 版本、还原文件数、删除新文件数
+- **依赖升级建议**：`composer update` 后务必重新跑 PHP 语法检查 + 在测试环境跑一次在线更新 dry-run
+
 ## 🤝 贡献 / 反馈
 
 欢迎提交 Issue 与 Pull Request。贡献前请先阅读下方「数据模型与设计约定」，保持与现有命名（`ks_` 前缀、`created_at`/`updated_at` 时间戳等）一致。
@@ -177,9 +189,26 @@ In Chinese vocational (中职) schools, teacher class-period (课时) and payrol
 - 📤 **Export & backup**: personal / school / department CSV, reconciliation CSV, and **one-click SQL database dump**
 - 🤖 **AI assistant**: conversational Q&A & stats, paste-to-parse schedules; OpenAI-compatible API reserved — falls back to a local rule engine when unconfigured
 - 📅 **Timetable calendar**: week-view schedule
-- 🔐 **Security**: password hashing, server-side sessions, full operation logging, CSRF token (X-CSRF-Token) + strict SSRF protection
-- 🗂️ **Online updater**: admin-managed update center (manifest signature verify + incremental patch + auto-backup + rollback + maintenance mode)
+- 🔐 **Security**: password hashing, server-side sessions, full operation logging, **CSRF token (X-CSRF-Token)**, **strict SSRF protection** (DNS pin + protocol allowlist), `HttpOnly` + `SameSite=Lax` cookies, **maintenance-mode auto-recovery** via `register_shutdown_function`
+- 🗂️ **Online updater**: admin-managed update center with **manifest RSA-SHA256 signature verify**, **single-package enforcement**, SHA256 + path allowlist, **auto backup before apply**, **explicit rollback** (separates restored/removed-new files), maintenance mode with `Retry-After`
 - 📱 **Responsive UI**: Bootstrap 5 + Chart.js — works on desktop and mobile
+
+## 🆕 Recent Updates
+
+**2026-09 (v1.0.1) — Online updater security hardening**
+
+- **CSRF protection is now real**: global `CsrfVerify` middleware on every `POST/PUT/DELETE/PATCH`; frontend `api()` auto-injects the token; login/register/install/`csrfToken` are whitelisted; `Cookie` gained `HttpOnly` + `SameSite=Lax`; 419 auto-refetches
+- **SSRF hardened**: `CURLOPT_RESOLVE` pins the resolved IP (no DNS rebinding / TOCTOU); `CURLOPT_PROTOCOLS` only allows HTTP/HTTPS; 302 follows are disabled
+- **Maintenance mode cannot get stuck**: flag is written with `LOCK_EX`; a `register_shutdown_function` clears it on PHP fatal
+- **Maintenance no longer leaks state**: moved from `Base::initialize` to `requireLogin/requireAdmin`, only authenticated users get a 503
+- **Manifest multi-package rejected**: `UpdateService::check` enforces `files.length ≤ 1`
+- **Settings persistence**: 「基础配置」 now exposes **`update_manifest_url`**, validated by `settingsSave` (https-only + length + SSRF pre-check)
+- **Backup reliability**: `Backup::dump` **throws** when `SHOW CREATE TABLE` fails (views / missing privilege) — no silent half-baked dumps
+- **Rollback observability**: splits `restored_files` vs `removed_new_files` in the response
+- **Updatable status is cached**: `updateStatus` carries `latest_version` / `last_check_at` / `php_version` / `app_version_baseline` so the UI doesn't need a manual `check` first
+- **New sample manifest**: `docs/manifest.example.json` for publishers
+- **Logs unified**: `runtime/debug_upd.txt` removed; everything goes to `Log::error`; SQL errors are surfaced as `index #N` + code only — DDL is **not** echoed back
+- **Patch correctness**: file overwrites keep the original `fileperms` (0755 scripts are no longer downgraded to 0644); backups > 256MB warn; `runtime/.htaccess` provides Apache-side fallback protection
 
 ## 🧱 Tech Stack
 
