@@ -1,0 +1,19 @@
+{
+    "latest_version": "1.0.1",
+    "min_php": "7.4.0",
+    "published_at": "2026-09-08T21:00:00+08:00",
+    "changelog": "v1.0.1: 在线更新安全加固 (CSRF/SSRF/维护兑底/回滚可读) + PHP 8.2 兼容 (Loader::parseName 强转 string)",
+    "requires": {
+        "from_version": "1.0.0"
+    },
+    "files": [
+        {
+            "name": "keshi-1.0.1.zip",
+            "url": "https://cnb.cool/bmayan/class-hours-tracker/-/raw/main/release/keshi-1.0.1.zip",
+            "sha256": "36a85db3f9042ce1ce65107b7760ce5299da4d3531439f6ce28c8c063f76296f",
+            "version": "1.0.1",
+            "size": 631079
+        }
+    ],
+    "signature": "PwNQml332517SkOq8J7ChPNulufqtQ6lOphvnLXuRnOVcQ4QleyG04baML0p3tL/p0bLiWAtvgQSyzZhQdD+aYFn/ZuaV40+AxOzARqHnFFmNEA/IE8wkRRLCQrxSiRA+OnYlOu4HCOR4ZIBUNZgjEwB9E2c9o4xoSAx6IYcccBi4XDZiXd5SHExEQ3uBl+5zb1qczXYBA1/IMUoS3PjiLEfFDgqzluyNvV9Fi+qHXAR2+m2dagjcsacVKGpNxxr7Pcu5WvoaNOKTGRFBrR7U7bRM5hYLTR0HZvdJZe6M220vErcgxx51wierZ+oWpQlrF3Dp9Gh35WIEzmvnWxD/w=="
+}
