@@ -55,6 +55,9 @@ class Base extends Controller
         if ($on) {
             return @file_put_contents($flag, "maintenance at " . date('c') . "\n") !== false;
         }
+        if (!is_file($flag)) {
+            return true;
+        }
         return @unlink($flag);
     }
 

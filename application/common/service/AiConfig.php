@@ -131,6 +131,10 @@ class AiConfig
         if (strlen($chatUrl) > 500) {
             return ['ok' => false, 'msg' => '接口地址过长', 'models' => []];
         }
+        $urlError = self::validateRemoteUrl($chatUrl);
+        if ($urlError !== '') {
+            return ['ok' => false, 'msg' => $urlError, 'models' => []];
+        }
         $key = trim((string)$key);
         if ($key === '') {
             return ['ok' => false, 'msg' => '请填写 API Key（或先保存一次配置后再拉取）', 'models' => []];
@@ -195,6 +199,34 @@ class AiConfig
             return $url;
         }
         return rtrim($url, '/') . '/models';
+    }
+
+    private static function validateRemoteUrl($url)
+    {
+        $parts = parse_url($url);
+        if (!is_array($parts) || empty($parts['host']) || isset($parts['user']) || isset($parts['pass'])) {
+            return '接口地址格式不正确，且不得包含用户名或密码';
+        }
+        $host = strtolower(trim((string) $parts['host'], '[]'));
+        if ($host === 'localhost' || $host === 'metadata.google.internal' || $host === '169.254.169.254') {
+            return '为安全起见，不允许访问本机或云元数据地址';
+        }
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            if (!filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                return '为安全起见，不允许访问内网或保留 IP 地址';
+            }
+            return '';
+        }
+        $records = @dns_get_record($host, DNS_A | DNS_AAAA);
+        if (is_array($records)) {
+            foreach ($records as $record) {
+                $ip = isset($record['ip']) ? $record['ip'] : (isset($record['ipv6']) ? $record['ipv6'] : '');
+                if ($ip !== '' && !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                    return '接口域名解析到了内网或保留 IP 地址';
+                }
+            }
+        }
+        return '';
     }
 
     private static function normalize($config)

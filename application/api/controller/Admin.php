@@ -175,7 +175,7 @@ class Admin extends Base
 
         $this->log('reset_pwd', 'teacher', $t->id, "重置密码：{$t->getData('name')}");
 
-        return $this->ok(null, '密码已重置为 ' . $pwd);
+        return $this->ok(null, '密码已重置，请通过安全渠道告知用户。');
     }
 
     /**
@@ -733,6 +733,9 @@ class Admin extends Base
             UpdateService::assertEnvCompatible($info);
 
             $pkg = UpdateService::download($info['files'][0], $manifestUrl);
+            if ((string) $pkg['version'] !== (string) $info['latest_version']) {
+                throw new \RuntimeException('更新包版本与更新清单不一致，已拒绝安装。');
+            }
 
             // 备份将被覆盖的文件 + 整库备份（含 SQL 时尤其重要）
             $fileBackup = UpdateService::backup($pkg['path']);

@@ -126,12 +126,17 @@ class Backup
             $runtimeConfig = [];
         }
 
-        // 读取 config/database.php 的默认值（无法 require 已加载的文件，所以手动写默认值）
-        $host    = isset($runtimeConfig['hostname']) ? $runtimeConfig['hostname'] : '127.0.0.1';
-        $port    = isset($runtimeConfig['hostport']) ? $runtimeConfig['hostport'] : '3399';
-        $name    = isset($runtimeConfig['database']) ? $runtimeConfig['database'] : 'keshi';
-        $user    = isset($runtimeConfig['username']) ? $runtimeConfig['username'] : 'keshi';
-        $pass    = isset($runtimeConfig['password']) ? $runtimeConfig['password'] : 'keshi123456';
+        $required = ['hostname', 'hostport', 'database', 'username', 'password'];
+        foreach ($required as $key) {
+            if (!array_key_exists($key, $runtimeConfig) || (string) $runtimeConfig[$key] === '') {
+                throw new \RuntimeException('数据库连接配置不完整，缺少 ' . $key . '。');
+            }
+        }
+        $host    = (string) $runtimeConfig['hostname'];
+        $port    = (string) $runtimeConfig['hostport'];
+        $name    = (string) $runtimeConfig['database'];
+        $user    = (string) $runtimeConfig['username'];
+        $pass    = (string) $runtimeConfig['password'];
         $charset = 'utf8mb4';
 
         $dsn = "mysql:host={$host};port={$port};dbname={$name};charset={$charset}";

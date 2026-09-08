@@ -110,19 +110,24 @@ class UpdateService
 
         $hash = hash_file('sha256', $target);
         $expect = strtolower(trim(isset($fileInfo['sha256']) ? (string) $fileInfo['sha256'] : ''));
-        if ($expect !== '' && !hash_equals($expect, strtolower($hash))) {
+        if (!preg_match('/^[a-f0-9]{64}$/', $expect)) {
+            @unlink($target);
+            throw new \RuntimeException('更新清单缺少合法的 64 位 SHA-256，已拒绝安装。');
+        }
+        if (!hash_equals($expect, strtolower($hash))) {
             @unlink($target);
             throw new \RuntimeException('更新包 SHA-256 校验失败，已删除可疑文件。');
         }
-        if (!class_exists('ZipArchive')) {
+        $packageVersion = trim(isset($fileInfo['version']) ? (string) $fileInfo['version'] : '');
+        if ($packageVersion === '') {
             @unlink($target);
-            throw new \RuntimeException('当前 PHP 未启用 ZipArchive 扩展，无法解压更新包。');
+            throw new \RuntimeException('更新清单缺少更新包版本号，已拒绝安装。');
         }
         return [
             'path'    => $target,
             'size'    => filesize($target),
             'sha256'  => $hash,
-            'version' => isset($fileInfo['version']) ? $fileInfo['version'] : '',
+            'version' => $packageVersion,
         ];
     }
 
@@ -132,8 +137,7 @@ class UpdateService
 
     /**
      * 备份将被 zip 覆盖的文件，返回备份路径。
-     * 备份集与 extractWhitelisted 的覆盖集口径一致（白名单 ∩ 非保护 ∩ 本地已存在），
-     * 并在备份目录写 _meta.json 记录备份时版本，供回滚后恢复版本号。
+     * 备份集与 extractWhitelisted 的覆盖集口径一致，并记录新增文件与更新包哈希，供可靠回滚。
      */
     public static function backup($zipPath)
     {
@@ -148,13 +152,20 @@ class UpdateService
 
         $files = self::zipEntryNames($zip);
         $backed = 0;
+        $newFiles = [];
+        $coveredFiles = [];
         foreach ($files as $entry) {
             $rel = self::normalizeEntry($entry);
             if ($rel === '' || self::isProtected($rel) || !self::inAllowlist($rel)) {
                 continue;
             }
+            if (substr($entry, -1) === '/' || strpos(basename($rel), '.') === 0) {
+                continue;
+            }
+            $coveredFiles[] = $rel;
             $targetAbs = self::safeTargetAbs($rel);
             if ($targetAbs === '' || !is_file($targetAbs)) {
+                $newFiles[] = $rel;
                 continue;
             }
             $dest = $backDir . DIRECTORY_SEPARATOR . str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $rel);
@@ -167,13 +178,19 @@ class UpdateService
             }
         }
         $zip->close();
-        // 元信息：回滚时据此恢复 app_version，避免文件回了版本号没回
+        $newFiles = array_values(array_unique($newFiles));
+        $coveredFiles = array_values(array_unique($coveredFiles));
+        // 元信息：回滚时恢复版本号、删除新增文件，并按包哈希匹配 downgrade.sql
         @file_put_contents($backDir . DIRECTORY_SEPARATOR . '_meta.json', json_encode([
-            'version' => self::currentVersion(),
-            'time'    => date('c'),
-            'files'   => $backed,
+            'version'       => self::currentVersion(),
+            'time'          => date('c'),
+            'files'         => $backed,
+            'covered_files' => $coveredFiles,
+            'new_files'     => $newFiles,
+            'package_sha256'=> is_file($zipPath) ? hash_file('sha256', $zipPath) : '',
+            'package_version' => '',
         ], JSON_UNESCAPED_UNICODE));
-        return ['dir' => $backDir, 'files' => $backed];
+        return ['dir' => $backDir, 'files' => $backed, 'new_files' => $newFiles];
     }
 
     /**
@@ -344,6 +361,7 @@ class UpdateService
         sort($fileBackups);
         $restored = 0;
         $restoredVersion = '';
+        $meta = [];
         // 取最近一份文件备份还原
         if ($fileBackups) {
             $dir = array_pop($fileBackups);
@@ -376,6 +394,25 @@ class UpdateService
                     @mkdir($d, 0755, true);
                 }
                 if (@copy($file->getPathname(), $targetAbs)) {
+                    $restored++;
+                }
+            }
+            $newFiles = is_array($meta) && isset($meta['new_files']) && is_array($meta['new_files'])
+                ? array_values(array_unique($meta['new_files'])) : [];
+            if ($downgradeZipPath !== '' && is_file($downgradeZipPath)
+                && is_array($meta) && !empty($meta['package_sha256'])) {
+                $actualPackageHash = hash_file('sha256', $downgradeZipPath);
+                if (!hash_equals(strtolower((string) $meta['package_sha256']), strtolower($actualPackageHash))) {
+                    throw new \RuntimeException('回滚包与文件备份不匹配，已拒绝执行 downgrade.sql。');
+                }
+            }
+            foreach ($newFiles as $rel) {
+                $rel = self::normalizeEntry($rel);
+                if ($rel === '' || !self::inAllowlist($rel) || self::isProtected($rel)) {
+                    continue;
+                }
+                $targetAbs = self::safeTargetAbs($rel);
+                if ($targetAbs !== '' && is_file($targetAbs) && @unlink($targetAbs)) {
                     $restored++;
                 }
             }
@@ -644,6 +681,29 @@ class UpdateService
         }
         if (strlen($url) > 1000) {
             throw new \RuntimeException($label . '过长。');
+        }
+        $parts = parse_url($url);
+        if (!is_array($parts) || empty($parts['host']) || isset($parts['user']) || isset($parts['pass'])) {
+            throw new \RuntimeException($label . '格式不正确，且不得包含用户名或密码。');
+        }
+        $host = strtolower(trim((string) $parts['host'], '[]'));
+        if ($host === 'localhost' || $host === 'metadata.google.internal' || $host === '169.254.169.254') {
+            throw new \RuntimeException($label . '不能指向本机或云元数据地址。');
+        }
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            if (!filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                throw new \RuntimeException($label . '不能指向内网或保留 IP 地址。');
+            }
+        } else {
+            $records = @dns_get_record($host, DNS_A | DNS_AAAA);
+            if (is_array($records)) {
+                foreach ($records as $record) {
+                    $ip = isset($record['ip']) ? $record['ip'] : (isset($record['ipv6']) ? $record['ipv6'] : '');
+                    if ($ip !== '' && !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                        throw new \RuntimeException($label . '解析到了内网或保留 IP 地址。');
+                    }
+                }
+            }
         }
         return $url;
     }
