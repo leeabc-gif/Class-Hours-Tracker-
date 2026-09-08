@@ -45,7 +45,7 @@
 - 📤 **导出与备份**：个人 / 全校 / 院系课时 CSV 导出、月度对账导出、**一键 SQL 数据库备份**
 - 🤖 **AI 助手**：会话式问答与统计、粘贴课表解析；预留大模型接口（OpenAI 兼容），未配置时自动回落本地规则引擎
 - 📅 **课表日历**：周视图课表，直观查看排课
-- 🔐 **安全**：口令哈希、Session 会话、操作日志全留痕、CSRF 防护、班级/课程输入白名单校验
+- 🔐 **安全**：口令哈希、Session 会话、操作日志全留痕、CSRF token（X-CSRF-Token）+ 严格 SSRF 防护、班级/课程输入白名单校验
 - 🗂️ **在线更新**：后台内置更新管理器（manifest 验签 + 增量覆盖 + 自动备份 + 可回滚 + 维护模式）
 - 📱 **响应式**：Bootstrap 5 + Chart.js，PC / 手机都能用
 
@@ -177,7 +177,7 @@ In Chinese vocational (中职) schools, teacher class-period (课时) and payrol
 - 📤 **Export & backup**: personal / school / department CSV, reconciliation CSV, and **one-click SQL database dump**
 - 🤖 **AI assistant**: conversational Q&A & stats, paste-to-parse schedules; OpenAI-compatible API reserved — falls back to a local rule engine when unconfigured
 - 📅 **Timetable calendar**: week-view schedule
-- 🔐 **Security**: password hashing, server-side sessions, full operation logging, CSRF protection
+- 🔐 **Security**: password hashing, server-side sessions, full operation logging, CSRF token (X-CSRF-Token) + strict SSRF protection
 - 🗂️ **Online updater**: admin-managed update center (manifest signature verify + incremental patch + auto-backup + rollback + maintenance mode)
 - 📱 **Responsive UI**: Bootstrap 5 + Chart.js — works on desktop and mobile
 

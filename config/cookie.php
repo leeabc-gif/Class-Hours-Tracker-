@@ -23,8 +23,10 @@ return [
     'domain'    => '',
     //  cookie 启用安全传输
     'secure'    => false,
-    // httponly设置
-    'httponly'  => '',
+    // httponly设置（true 防止 JS 读取，减小 XSS 衍生 CSRF 影响）
+    'httponly'  => true,
     // 是否使用 setcookie
     'setcookie' => true,
+    // SameSite：默认 Lax；如全部 https 可上调至 Strict
+    'samesite'  => 'Lax',
 ];

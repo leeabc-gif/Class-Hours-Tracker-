@@ -1,0 +1,19 @@
+{
+    "latest_version": "1.0.1",
+    "min_php": "7.4.0",
+    "published_at": "2026-09-08T10:00:00+08:00",
+    "changelog": "修复在线更新 SSRF / CSRF；增强回滚；支持签名校验",
+    "requires": {
+        "from_version": "1.0.0"
+    },
+    "files": [
+        {
+            "name": "keshi-1.0.1.zip",
+            "url": "https://update.example.com/keshi-1.0.1.zip",
+            "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "version": "1.0.1",
+            "size": 5242880
+        }
+    ],
+    "signature": "BASE64_RSA_SHA256_SIGNATURE_OF_CANONICAL_JSON_WITHOUT_SIGNATURE_FIELD"
+}

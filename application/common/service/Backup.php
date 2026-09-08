@@ -57,6 +57,16 @@ class Backup
             $createSql  = (is_array($createRow) && isset($createRow['Create Table']))
                 ? $createRow['Create Table'] : '';
 
+            // 必须-4：SHOW CREATE 失败/被权限拒绝/目标是视图时，$createSql 仍可能为非空但不含合法 CREATE TABLE
+            // 之前会拼出"无 CREATE TABLE 却有 INSERT"的半成品 SQL，导入必失败。
+            // 这里强制校验：若为空，或不是 CREATE TABLE 开头（视图会拿到 Create View），
+            // 一律抛错停止整库备份，避免静默数据丢失。
+            if (!is_string($createSql) || $createSql === '' || stripos(ltrim($createSql), 'CREATE TABLE') !== 0) {
+                throw new \RuntimeException(
+                    "无法读取表 {$t} 的 CREATE TABLE 语句（可能是视图或权限不足），已中止整库备份以避免半成品 SQL。"
+                );
+            }
+
             $lines[] = '-- ----------------------------';
             $lines[] = "-- 表结构：{$t}";
             $lines[] = '-- ----------------------------';
@@ -76,7 +86,11 @@ class Backup
 
             // 每 200 行一个 INSERT，避免单条语句过长被 max_allowed_packet 拒绝
             $cols    = array_keys($rows[0]);
-            $colList = '`' . implode('`,`', $cols) . '`';
+            // M-9：列名加反引号并把 ` 转义成 ``，避免特殊字符污染 SQL
+            $colList = '`' . implode('`,`', array_map(
+                static function ($c) { return str_replace('`', '``', (string) $c); },
+                $cols
+            )) . '`';
             $chunks  = array_chunk($rows, 200);
             foreach ($chunks as $chunk) {
                 $values = [];
@@ -87,7 +101,12 @@ class Backup
                         if ($v === null) {
                             $vals[] = 'NULL';
                         } else {
-                            $vals[] = $pdo->quote((string)$v);
+                            // M-5：二进制/非字符串字段用 quote() 强转；如果发现是二进制流（BLOB 痕迹），
+                            // 直接报错，避免静默截断。当前 schema 全是文本/数字，未必命中，但保留防线。
+                            if (is_resource($v)) {
+                                throw new \RuntimeException("表 {$t} 字段 {$c} 出现 BLOB 资源类型，暂不支持自动备份。");
+                            }
+                            $vals[] = $pdo->quote((string) $v);
                         }
                     }
                     $values[] = '(' . implode(',', $vals) . ')';
@@ -140,10 +159,21 @@ class Backup
         $charset = 'utf8mb4';
 
         $dsn = "mysql:host={$host};port={$port};dbname={$name};charset={$charset}";
-        $pdo = new \PDO($dsn, $user, $pass, [
-            \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
-            \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
-        ]);
+        try {
+            $pdo = new \PDO($dsn, $user, $pass, [
+                \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
+                \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+            ]);
+        } catch (\PDOException $e) {
+            // M-7：不把 PDO 原始错误（含 host/port/凭据提示）冒泡出去，
+            // 统一映射成"数据库连接失败"文案，详细错误走 Log。
+            \think\facade\Log::error('[backup] rawPdo connect failed: ' . $e->getMessage(), [
+                'host' => $host,
+                'port' => $port,
+                'db'   => $name,
+            ]);
+            throw new \RuntimeException('数据库连接失败，请检查 installed.php 配置。');
+        }
         return $pdo;
     }
 }

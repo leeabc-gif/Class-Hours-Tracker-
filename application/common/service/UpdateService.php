@@ -72,6 +72,12 @@ class UpdateService
         if (!self::verifyManifestSignature($data)) {
             throw new \RuntimeException('更新清单签名无效或缺失：拒绝使用未经官方签名的清单。');
         }
+        $files = isset($data['files']) && is_array($data['files']) ? $data['files'] : [];
+        // 当前实现仅支持单包：多包场景（混合增量 + 全量等）一律拒绝，
+        // 避免任意第二个文件绕过 sha256/size 白名单策略。
+        if (count($files) > 1) {
+            throw new \RuntimeException('当前版本仅支持单包更新，请发布方合并后再上传。');
+        }
         $current = self::currentVersion();
         $latest  = (string) $data['latest_version'];
 
@@ -83,9 +89,31 @@ class UpdateService
             'from_version'     => isset($data['requires']['from_version']) ? (string) $data['requires']['from_version'] : '',
             'changelog'        => isset($data['changelog']) ? (string) $data['changelog'] : '',
             'published_at'     => isset($data['published_at']) ? (string) $data['published_at'] : '',
-            'files'            => isset($data['files']) && is_array($data['files']) ? $data['files'] : [],
+            'files'            => $files,
             'checked_at'       => date('Y-m-d H:i:s'),
         ];
+    }
+
+    /**
+     * 仅做 manifest URL 的安全校验（不下载）。供 settingsSave 写入前调用，
+     * 防止脏数据（如 javascript: / 私网 / 长 URL）落库。
+     * 规则：必须 https 开头，host/IP 不可为内网/保留段，长度 ≤ 1000。
+     */
+    public static function validateManifestUrl($url)
+    {
+        $url = trim((string) $url);
+        if ($url === '') {
+            throw new \RuntimeException('更新清单地址不能为空。');
+        }
+        if (!preg_match('#^https://#i', $url)) {
+            throw new \RuntimeException('更新清单地址必须以 https:// 开头。');
+        }
+        if (strlen($url) > 1000) {
+            throw new \RuntimeException('更新清单地址不能超过 1000 个字符。');
+        }
+        // 复用严格 SSRF 校验（IP/host 名/私网/保留段）
+        self::validateRemoteUrl($url, '更新清单地址');
+        return $url;
     }
 
     // ---------------------------------------------------------------
@@ -206,6 +234,19 @@ class UpdateService
         if (file_put_contents($path, $dump['sql']) === false) {
             throw new \RuntimeException('数据库备份文件写入失败。');
         }
+        // M-6：单次备份超过 256MB 时强制告警（提醒运维扩容 / 清理）；
+        // 不阻断升级，但写入 Log + 备份目录 manifest 提示。
+        $warnThreshold = 256 * 1024 * 1024;
+        if ($dump['size'] > $warnThreshold) {
+            Log::warning('[update] db backup larger than 256MB: ' . $dump['size'] . ' bytes', [
+                'tables' => $dump['tables'],
+                'rows'   => $dump['rows'],
+            ]);
+            @file_put_contents(
+                $backDir . DIRECTORY_SEPARATOR . 'BACKUP_LARGE.txt',
+                "本备份超过 256MB（{$dump['size']} bytes），请关注磁盘容量。\n"
+            );
+        }
         return ['path' => $path, 'tables' => $dump['tables'], 'rows' => $dump['rows'], 'size' => $dump['size']];
     }
 
@@ -215,8 +256,9 @@ class UpdateService
 
     /**
      * 解压覆盖（白名单）+ 执行 upgrade.sql（事务）
+     * 注意：并发安全由调用方通过 acquireLock 兜底，本方法不再校验
      */
-    public static function apply($zipPath, $lockHandle = null)
+    public static function apply($zipPath)
     {
         $zip = new \ZipArchive();
         if ($zip->open($zipPath) !== true) {
@@ -295,7 +337,16 @@ class UpdateService
                 stream_copy_to_stream($fp, $out);
                 fclose($fp);
                 fclose($out);
-                @chmod($tmp, 0644);
+                // M-1：尽量保留原文件权限（0755/0644），覆盖后不被强制改为 0644
+                // 老文件不存在时退回 0644 兜底
+                $permMode = 0644;
+                if (is_file($targetAbs)) {
+                    $oldPerm = @fileperms($targetAbs);
+                    if (is_int($oldPerm)) {
+                        $permMode = ($oldPerm & 0777);
+                    }
+                }
+                @chmod($tmp, $permMode);
                 // rename 同目录内原子覆盖
                 if (!@rename($tmp, $targetAbs)) {
                     @unlink($tmp);
@@ -327,7 +378,9 @@ class UpdateService
         $pdo = \app\common\service\Backup::rawPdo();
         $pdo->beginTransaction();
         try {
+            $idx = 0;
             foreach ($statements as $stmt) {
+                $idx++;
                 $stmt = trim($stmt);
                 if ($stmt === '' || stripos($stmt, '--') === 0) {
                     continue;
@@ -335,7 +388,14 @@ class UpdateService
                 try {
                     $pdo->exec($stmt);
                 } catch (\Throwable $e) {
-                    throw new \RuntimeException('执行 upgrade.sql 失败（语句：' . mb_substr($stmt, 0, 120) . '）：' . $e->getMessage());
+                    // M-4：仅返回错误码 + 行号，SQL 内容（含 DDL/表结构）走 Log::error，
+                    // 不直接回显到前端，避免表结构探针。
+                    Log::error('[update] upgrade.sql exec failed at #' . $idx . ': ' . $e->getMessage(), [
+                        'stmt_index' => $idx,
+                        'stmt_preview' => mb_substr($stmt, 0, 200, 'UTF-8'),
+                        'error' => $e->getMessage(),
+                    ]);
+                    throw new \RuntimeException('执行 upgrade.sql 失败：第 ' . $idx . ' 条语句（' . $e->getMessage() . '）');
                 }
             }
             $pdo->commit();
@@ -360,6 +420,7 @@ class UpdateService
         $fileBackups = glob($base . DIRECTORY_SEPARATOR . 'files_*');
         sort($fileBackups);
         $restored = 0;
+        $removedNew = 0;
         $restoredVersion = '';
         $meta = [];
         // 取最近一份文件备份还原
@@ -406,6 +467,7 @@ class UpdateService
                     throw new \RuntimeException('回滚包与文件备份不匹配，已拒绝执行 downgrade.sql。');
                 }
             }
+            // M-10：拆开"还原文件数"和"删除新文件数"，避免 UI 把两类混在一起显示。
             foreach ($newFiles as $rel) {
                 $rel = self::normalizeEntry($rel);
                 if ($rel === '' || !self::inAllowlist($rel) || self::isProtected($rel)) {
@@ -413,7 +475,7 @@ class UpdateService
                 }
                 $targetAbs = self::safeTargetAbs($rel);
                 if ($targetAbs !== '' && is_file($targetAbs) && @unlink($targetAbs)) {
-                    $restored++;
+                    $removedNew++;
                 }
             }
             if ($restoredVersion !== '') {
@@ -434,7 +496,11 @@ class UpdateService
                 }
             }
         }
-        return ['restored_files' => $restored, 'restored_version' => $restoredVersion];
+        return [
+            'restored_files'  => $restored,
+            'removed_new_files' => $removedNew,
+            'restored_version' => $restoredVersion,
+        ];
     }
 
     // ---------------------------------------------------------------
@@ -723,16 +789,40 @@ class UpdateService
         if (!function_exists('curl_init')) {
             throw new \RuntimeException('当前 PHP 未启用 curl 扩展。');
         }
-        $ch = curl_init($url);
+        // S-1：先用严格 SSRF 规则校验（已含 DNS A/AAAA 解析），同时返回所有合法 IP。
+        $ips = self::resolveSafeIps($url);
+        if (empty($ips)) {
+            throw new \RuntimeException($label . '无法解析或解析到不可信 IP。');
+        }
+        $parts = parse_url($url);
+        $host  = isset($parts['host']) ? trim((string) $parts['host'], '[]') : '';
+        $port  = isset($parts['port']) ? (int) $parts['port'] : 0;
+        $scheme = isset($parts['scheme']) ? strtolower((string) $parts['scheme']) : 'https';
+
+        $ch = curl_init();
+        // 锁定解析结果到首个合法 IP（防 DNS rebinding / TOCTOU）
+        $primaryIp = $ips[0];
+        // 缺省端口：443/80
+        if ($port <= 0) {
+            $port = ($scheme === 'https') ? 443 : 80;
+        }
         curl_setopt_array($ch, [
+            CURLOPT_URL            => $url,
+            CURLOPT_RESOLVE        => [$host . ':' . $port . ':' . $primaryIp],
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS      => 5,
+            // 不再跟随 302：避免跳到内网/file:///gopher://
+            // 真要支持跳转，应在 CURLINFO_REDIRECT_URL 上重新跑 validateRemoteUrl + 重新解析 IP，
+            // 但当前业务仅信任受控官方 HTTPS 源，关闭跟随最稳。
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_MAXREDIRS      => 0,
             CURLOPT_CONNECTTIMEOUT => 15,
             CURLOPT_TIMEOUT        => 120,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_USERAGENT      => 'Keshi-Updater/1.0',
+            // 限制协议：仅 HTTP/HTTPS，绝不允许 file:// / gopher:// / ftp://
+            CURLOPT_PROTOCOLS      => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+            CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
         ]);
         // 通过写临时文件限制体积
         $tmp = tempnam(sys_get_temp_dir(), 'ksdl');
@@ -759,6 +849,40 @@ class UpdateService
         $data = file_get_contents($tmp);
         @unlink($tmp);
         return $data;
+    }
+
+    /**
+     * 把域名解析为 IP 列表，只保留通过严格 SSRF 校验的结果。
+     * @return string[] IP 列表（可空）
+     */
+    protected static function resolveSafeIps($url)
+    {
+        $url = trim((string) $url);
+        $parts = parse_url($url);
+        if (!is_array($parts) || empty($parts['host'])) {
+            return [];
+        }
+        $host = trim((string) $parts['host'], '[]');
+        if ($host === 'localhost' || $host === 'metadata.google.internal' || $host === '169.254.169.254') {
+            return [];
+        }
+        $ips = [];
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                $ips[] = $host;
+            }
+            return $ips;
+        }
+        $records = @dns_get_record($host, DNS_A | DNS_AAAA);
+        if (is_array($records)) {
+            foreach ($records as $record) {
+                $ip = isset($record['ip']) ? $record['ip'] : (isset($record['ipv6']) ? $record['ipv6'] : '');
+                if ($ip !== '' && filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                    $ips[] = $ip;
+                }
+            }
+        }
+        return $ips;
     }
 
     protected static function zipEntryNames($zip)

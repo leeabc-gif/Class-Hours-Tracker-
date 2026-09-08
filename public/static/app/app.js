@@ -151,13 +151,39 @@
   // =====================================================================
   // 2. API 客户端
   // =====================================================================
+  // 全局 CSRF token；登录/页面启动时由 fetchCsrf() 拉取并注入所有写请求
+  window._csrfToken = window._csrfToken || '';
+  async function fetchCsrf(){
+    if (window._csrfToken) return window._csrfToken;
+    try {
+      const r = await fetch('/api/auth/csrfToken', { credentials: 'same-origin' });
+      if (r.ok) {
+        const d = await r.json();
+        if (d && d.code === 0 && d.data && d.data.token) {
+          window._csrfToken = d.data.token;
+        }
+      }
+    } catch (e) { /* 离线场景忽略，进入 app 后会再尝试 */ }
+    return window._csrfToken;
+  }
+  // 启动时主动拉一次：保证登录前就有 token 可用
+  fetchCsrf();
+
   async function api(method, path, body, opts) {
     opts = opts || {};
     const opt = { method: method, credentials: 'same-origin' };
+    const headers = {};
+    const m = String(method || 'GET').toUpperCase();
+    // 写操作必须带 CSRF token（登录/注册/csrfToken/install 已在服务端白名单）
+    if (m !== 'GET' && m !== 'HEAD' && m !== 'OPTIONS') {
+      const t = await fetchCsrf();
+      if (t) headers['X-CSRF-Token'] = t;
+    }
     if (body !== undefined) {
-      opt.headers = { 'Content-Type': 'application/json' };
+      headers['Content-Type'] = 'application/json';
       opt.body = JSON.stringify(body);
     }
+    if (Object.keys(headers).length) opt.headers = headers;
     let resp;
     try {
       resp = await fetch(path, opt);
@@ -185,6 +211,13 @@
       showLogin();
       toast('登录已失效，请重新登录', 'warn');
       throw new Error('unauthorized');
+    }
+    if (data && data.code === 419) {
+      // CSRF token 失效：清空并提示用户刷新
+      window._csrfToken = '';
+      toast('会话凭证已过期，正在为您刷新…', 'warn');
+      await fetchCsrf();
+      throw new Error('csrf_retry');
     }
     return data;
   }
@@ -1861,6 +1894,9 @@
         <div class="col-6"><label class="form-label">系统模型名称</label><div class="input-group"><input id="cfModel" class="form-control" placeholder="如：gpt-4o-mini" list="cfModelList"><button class="btn btn-outline-secondary" type="button" onclick="KS.fetchSysModels()" title="根据接口地址和 Key 自动拉取模型列表"><i class="bi bi-arrow-down-circle me-1"></i>拉取</button></div><datalist id="cfModelList"></datalist></div></div>
         <div class="form-check mt-2"><input class="form-check-input" type="checkbox" id="cfKeyClear"><label class="form-check-label" for="cfKeyClear">清除已保存的系统 Key</label></div>
         <div class="small text-muted mt-2" id="cfKeyStatus">系统 Key 状态：读取中…</div>
+        <div class="mb-2 mt-3"><label class="form-label">在线更新清单地址 (manifest.json)</label>
+          <input id="cfUpdateUrl" class="form-control" placeholder="https://update.example.com/manifest.json（需 https，支持签名校验）"></div>
+        <div class="small text-muted">填写后，管理员后台「系统更新」页会直接使用该地址作为检查/下载源。</div>
         <button class="btn btn-primary mt-2" onclick="KS.saveSettings()"><i class="bi bi-check me-1"></i>保存系统参数</button></div></div></div>
     </div>`;
     loadDeptsTable(); loadClassesTable(); loadTermsTable(); loadAdminCoursesTable(); loadSettingsForm();
@@ -2005,6 +2041,7 @@
     $('#cfAi').value=String(s.ai_enabled==null?'1':s.ai_enabled); $('#cfProv').value=s.ai_provider||'openai-compatible';
     $('#cfUrl').value=s.ai_api_url||''; $('#cfKey').value=''; $('#cfModel').value=s.ai_model||'';
     $('#cfKeyStatus').textContent='系统 Key 状态：'+(s.ai_api_key_configured?'已配置（页面不显示明文）':'未配置');
+    const updEl=$('#cfUpdateUrl'); if(updEl) updEl.value=s.update_manifest_url||'';
   }
   App.fetchSysModels=async function(){
     const url=$('#cfUrl').value.trim(), key=$('#cfKey').value.trim();
@@ -2023,7 +2060,8 @@
   App.saveSettings=async function(){
     const payload={ school_name:$('#cfSchool').value.trim(), global_price:$('#cfPrice').value, week_standard_periods:$('#cfStd').value,
       ai_enabled:$('#cfAi').value, ai_provider:$('#cfProv').value.trim(), ai_api_url:$('#cfUrl').value.trim(), ai_model:$('#cfModel').value.trim(),
-      ai_api_key_clear:$('#cfKeyClear').checked?1:0 };
+      ai_api_key_clear:$('#cfKeyClear').checked?1:0,
+      update_manifest_url: ($('#cfUpdateUrl')?$('#cfUpdateUrl').value.trim():'') };
     const key=$('#cfKey').value.trim();
     if(key) payload.ai_api_key=key;
     const res=await POST('/api/admin/settingsSave',payload);
@@ -2101,9 +2139,10 @@
         <div class="card mb-3"><div class="card-h"><i class="bi bi-arrow-repeat text-primary"></i><span class="tt">系统在线更新</span></div>
         <div class="card-b">
           <div class="row g-2 mb-3">
-            <div class="col-6"><label class="form-label">当前版本</label><div class="fs-4 fw-bold" id="udCurrent">—</div></div>
-            <div class="col-6"><label class="form-label">最新版本</label><div class="fs-4 fw-bold text-success" id="udLatest">—</div></div>
+            <div class="col-6"><label class="form-label">当前版本</label><div class="fs-4 fw-bold" id="udCurrent">—</div><div class="small text-muted">出厂基线 <span id="udBaseline">—</span></div></div>
+            <div class="col-6"><label class="form-label">最新版本</label><div class="fs-4 fw-bold text-success" id="udLatest">—</div><div class="small text-muted" id="udLastCheck"></div></div>
           </div>
+          <div class="small text-muted mb-2">PHP <span id="udPhpVer">—</span></div>
           <div class="mb-3"><label class="form-label">更新清单地址 (manifest.json)</label>
             <input id="udManifest" class="form-control" placeholder="https://update.example.com/manifest.json"></div>
           <div class="small text-muted mb-2" id="udChangelog"></div>
@@ -2142,6 +2181,10 @@
     if($('#udCurrent')) $('#udCurrent').textContent=d.current_version||'—';
     if($('#udManifest')) $('#udManifest').value=d.manifest_url||'';
     if($('#udMaintBtn')) $('#udMaintBtn').textContent=d.maintenance?'维护中(关闭)':'进入维护模式';
+    if($('#udLatest') && d.latest_version) $('#udLatest').textContent=d.latest_version;
+    if($('#udBaseline') && d.app_version_baseline) $('#udBaseline').textContent=d.app_version_baseline;
+    if($('#udPhpVer') && d.php_version) $('#udPhpVer').textContent=d.php_version;
+    if($('#udLastCheck') && d.last_check_at) $('#udLastCheck').textContent='上次检查：'+d.last_check_at;
     const rb=$('#udRollbackBtn'); if(rb) rb.disabled=!d.can_rollback;
     const tb=$('#udBackupTbody');
     if(tb){
@@ -2189,6 +2232,7 @@
       (d.min_php?'<div class="small mt-1 text-muted">要求 PHP &ge; '+esc(d.min_php)+'</div>':'')
       , can?'alert-success':'alert-secondary');
     if(can){ $('#udResult').style.display=''; }
+    if($('#udLastCheck')) $('#udLastCheck').textContent='上次检查：'+esc(d.checked_at||new Date().toLocaleString());
   };
   App.updateInstall=async function(){
     const m=($('#udManifest').value||'').trim();

@@ -20,17 +20,8 @@ class Base extends Controller
     protected function initialize()
     {
         $this->user = Auth::user();
-
-        // 维护模式拦截（用于在线更新等需要短暂停服的场景）。
-        // 放行：管理员本人、登录接口、以及更新控制器（在途更新不能被自己拦掉）。
-        if (self::underMaintenance() && !$this->maintenanceExempt()) {
-            $resp = json([
-                'code' => 503,
-                'msg'  => '系统正在升级维护中，请稍后刷新页面。',
-                'data' => ['maintenance' => true],
-            ]);
-            throw new HttpResponseException($resp);
-        }
+        // S-2：先做鉴权（requireLogin/requireAdmin 由子类调用），
+        // 再做维护拦截，避免未登录/普通用户被 503 泄漏"系统是否在维护"。
     }
 
     /**
@@ -53,7 +44,33 @@ class Base extends Controller
         }
         $flag = $runtime . DIRECTORY_SEPARATOR . 'maintenance.flag';
         if ($on) {
-            return @file_put_contents($flag, "maintenance at " . date('c') . "\n") !== false;
+            // LOCK_EX 写：避免并发写产生半截内容
+            $ok = @file_put_contents($flag, "maintenance at " . date('c') . "\n", LOCK_EX) !== false;
+            if ($ok) {
+                // 必须-5：兜底关闭 —— 若 PHP 后续 fatal / exit / OOM 跳过 finally，
+                // shutdown_function 仍会执行，强制清除维护标记，避免系统被锁死。
+                // 这里只注册一次，依靠维护标记本身作为去重信号。
+                static $guardRegistered = false;
+                if (!$guardRegistered) {
+                    $guardRegistered = true;
+                    register_shutdown_function(function () {
+                        try {
+                            $runtime2 = rtrim((string) app()->getRuntimePath(), DIRECTORY_SEPARATOR);
+                            $f = $runtime2 . DIRECTORY_SEPARATOR . 'maintenance.flag';
+                            if (is_file($f)) {
+                                @unlink($f);
+                                @file_put_contents(
+                                    $runtime2 . DIRECTORY_SEPARATOR . 'maintenance.auto_cleared',
+                                    date('c') . " maintenance.flag auto-cleared by shutdown_function\n"
+                                );
+                            }
+                        } catch (\Throwable $e) {
+                            // 兜底不能再抛
+                        }
+                    });
+                }
+            }
+            return $ok;
         }
         if (!is_file($flag)) {
             return true;
@@ -70,10 +87,14 @@ class Base extends Controller
         if ($this->user && $this->user->isAdmin()) {
             return true;
         }
-        // 登录、登出、以及系统更新控制器放行
+        // 登录、登出、放行（避免登录接口被维护锁卡死）
         $controller = strtolower((string) $this->request->controller());
         $action     = strtolower((string) $this->request->action());
-        if (in_array($controller, ['auth', 'update'], true)) {
+        if (in_array($controller, ['auth'], true)) {
+            return true;
+        }
+        // 在线更新控制器自身放行（在途更新需要继续调用 updateCheck/updateInstall）
+        if ($controller === 'admin' && in_array($action, ['updatestatus', 'updatecheck', 'updateinstall', 'updaterollback', 'maintenancetoggle'], true)) {
             return true;
         }
         // index/首页类页面放行，避免维护期间入口完全空白（前端仍需加载引导）
@@ -111,6 +132,8 @@ class Base extends Controller
         if (!$this->user) {
             $this->abort(401, '登录已失效，请重新登录');
         }
+        // 登录用户也走维护拦截（已在 requireAdmin 之前会再校验一次，覆盖普通用户路由）
+        $this->enforceMaintenance();
     }
 
     /**
@@ -122,6 +145,36 @@ class Base extends Controller
         if (!$this->user->isAdmin()) {
             $this->abort(403, '无权访问，该功能仅限管理员');
         }
+        $this->enforceMaintenance();
+    }
+
+    /**
+     * 维护模式拦截：仅在已鉴权后调用，避免对未登录用户泄漏维护状态。
+     * 放行：管理员本人、登录/登出/Cookie 探活、更新控制器自身。
+     */
+    protected function enforceMaintenance()
+    {
+        if (!self::underMaintenance() || $this->maintenanceExempt()) {
+            return;
+        }
+        // 维护时附带 Retry-After（按当前 flag 时间推一个短延迟），
+        // 让浏览器/爬虫/proxy 知道几秒后可重试。
+        $runtime = rtrim((string) app()->getRuntimePath(), DIRECTORY_SEPARATOR);
+        $flag = $runtime . DIRECTORY_SEPARATOR . 'maintenance.flag';
+        $retry = 30;
+        if (is_file($flag)) {
+            $mtime = @filemtime($flag);
+            if (is_int($mtime)) {
+                $retry = max(5, 30 - (time() - $mtime));
+            }
+        }
+        $resp = json([
+            'code' => 503,
+            'msg'  => '系统正在升级维护中，请稍后刷新页面。',
+            'data' => ['maintenance' => true],
+        ]);
+        $httpResp = \think\Response::create($resp, 'json', 503, ['Retry-After' => (string) $retry]);
+        throw new HttpResponseException($httpResp);
     }
 
     /**

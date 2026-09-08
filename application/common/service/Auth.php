@@ -45,6 +45,11 @@ class Auth
 
         session(self::SESSION_KEY, $t->id);
 
+        // 登录成功时为新会话派发 CSRF token（旧会话若已签发过则保持稳定，前端需要重新 fetch）
+        if (!session('_csrf_token')) {
+            session('_csrf_token', bin2hex(random_bytes(32)));
+        }
+
         OperationLog::record($t->id, $t->name, 'login', 'teacher', $t->id,
             '登录系统（' . ($t->isAdmin() ? '管理员' : '教师') . '）');
 

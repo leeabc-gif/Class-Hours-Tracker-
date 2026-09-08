@@ -583,6 +583,21 @@ class Admin extends Base
             if ($k === 'ai_api_url' && strlen($value) > 500) {
                 return $this->fail('系统模型接口地址不能超过 500 个字符');
             }
+            if ($k === 'update_manifest_url' && $value !== '') {
+                // 强制 https：清单必须经签名/强校验，且 SSRF 防护会更稳
+                if (!preg_match('#^https://#i', $value)) {
+                    return $this->fail('更新清单地址必须以 https:// 开头');
+                }
+                if (strlen($value) > 1000) {
+                    return $this->fail('更新清单地址不能超过 1000 个字符');
+                }
+                // 写入前调用 UpdateService 做一次轻量校验，避免脏数据落库
+                try {
+                    \app\common\service\UpdateService::validateManifestUrl($value);
+                } catch (\Throwable $uv) {
+                    return $this->fail('更新清单地址不安全：' . $uv->getMessage());
+                }
+            }
             if ($k === 'ai_model' && strlen($value) > 100) {
                 return $this->fail('系统模型名称不能超过 100 个字符');
             }
@@ -670,6 +685,8 @@ class Admin extends Base
      */
     public function updateStatus()
     {
+        $cachedLatest = (string) Setting::get('update_last_check_latest', '');
+        $cachedTime   = (string) Setting::get('update_last_check_at', '');
         return $this->ok([
             'current_version'   => UpdateService::currentVersion(),
             'maintenance'       => Base::underMaintenance(),
@@ -678,6 +695,9 @@ class Admin extends Base
             'can_rollback'      => UpdateService::hasFileBackup(),
             'backups'           => UpdateService::listBackups(),
             'php_version'       => PHP_VERSION,
+            // L-4：上次检查缓存的最新版本（首页刷新也能看到，不需点"检查更新"）
+            'latest_version'    => $cachedLatest,
+            'last_check_at'     => $cachedTime,
         ]);
     }
 
@@ -695,9 +715,15 @@ class Admin extends Base
         }
         try {
             $info = UpdateService::check($manifestUrl);
+            // L-4：把 check 结果缓存下来，updateStatus 也能复用
+            Setting::set('update_last_check_latest', (string) $info['latest_version']);
+            Setting::set('update_last_check_at', (string) $info['checked_at']);
             $this->log('update_check', 'system', 0, '检查更新：当前 ' . $info['current_version'] . '，远程 ' . $info['latest_version']);
             return $this->ok($info);
         } catch (\Throwable $e) {
+            \think\facade\Log::error('[update] check failed: ' . $e->getMessage(), [
+                'manifest_url' => $manifestUrl,
+            ]);
             return $this->fail('检查更新失败：' . $e->getMessage());
         }
     }
@@ -746,7 +772,7 @@ class Admin extends Base
 
             try {
                 // 先更新代码 / SQL
-                UpdateService::apply($pkg['path'], $lock);
+                UpdateService::apply($pkg['path']);
                 // 成功后写版本号
                 $targetVer = $info['latest_version'];
                 Setting::set('app_version', $targetVer);
@@ -782,8 +808,12 @@ class Admin extends Base
             }
         } catch (\Throwable $e) {
             Base::setMaintenance(false);
-            @file_put_contents(app()->getRootPath() . 'runtime/debug_upd.txt',
-                date('c') . "\n" . $e->getMessage() . "\n" . $e->getTraceAsString() . "\n");
+            // M-3：失败信息统一走 Log::error（含 traceAsString），不再在 runtime 留裸堆栈文件
+            // （运维从 ks_operation_log / runtime/log 即可定位），避免敏感路径外泄
+            \think\facade\Log::error('[update] failed: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'manifest_url' => $manifestUrl,
+            ]);
             return $this->fail('更新失败：' . $e->getMessage());
         } finally {
             UpdateService::releaseLock($lock);
@@ -814,14 +844,18 @@ class Admin extends Base
             }
             $after = UpdateService::currentVersion();
             $this->log('update_rollback', 'system', 0,
-                '手动回滚：v' . $before . ' → v' . $after . '，还原文件 ' . $r['restored_files'] . ' 个');
+                '手动回滚：v' . $before . ' → v' . $after . '，还原文件 ' . $r['restored_files'] . ' 个；删除新文件 ' . $r['removed_new_files'] . ' 个');
             return $this->ok([
-                'from'            => $before,
-                'to'              => $after,
-                'restored_files'  => $r['restored_files'],
+                'from'              => $before,
+                'to'                => $after,
+                'restored_files'    => $r['restored_files'],
+                'removed_new_files' => $r['removed_new_files'],
             ], '已回滚到上一版本，请刷新页面确认。');
         } catch (\Throwable $e) {
             Base::setMaintenance(false);
+            \think\facade\Log::error('[update] rollback failed: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
             return $this->fail('回滚失败：' . $e->getMessage());
         } finally {
             UpdateService::releaseLock($lock);

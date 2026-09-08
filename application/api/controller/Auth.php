@@ -4,6 +4,7 @@ namespace app\api\controller;
 use app\common\controller\Base;
 use app\common\service\Auth as AuthService;
 use app\common\service\Boot;
+use think\facade\Session;
 
 /**
  * 登录 / 登出 / 当前身份
@@ -13,6 +14,20 @@ use app\common\service\Boot;
  */
 class Auth extends Base
 {
+    /**
+     * 颁发 CSRF token（白名单放行，无需登录）
+     * 前端在加载主页面 / 每次刷新时调用，把返回的 token 写入
+     * 后续所有写请求的 X-CSRF-Token 头。
+     */
+    public function csrfToken()
+    {
+        $token = (string) Session::get('_csrf_token');
+        if ($token === '') {
+            $token = bin2hex(random_bytes(32));
+            Session::set('_csrf_token', $token);
+        }
+        return $this->ok(['token' => $token]);
+    }
     /**
      * 登录
      * 管理员与教师共用入口，登录成功后按角色分流到不同首页
