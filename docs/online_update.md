@@ -76,7 +76,21 @@
 - `sha256` 必须用客户端 64 位小写 hex
 - `signature` 用 `config/update_trust.php` 里登记的公钥对应的私钥签
 
-## 5. 签名流程（`tools/sign_manifest.php`）
+## 5. 发布源选型（HTTPS raw 直链）
+
+更新源需要支持 **公开 HTTPS 单文件直链**（即 `https://x/manifest.json` 直接拿到 `application/json`）。下面是常见选项：
+
+| 平台 | raw URL 形式 | 公开访问 | 备注 |
+|---|---|---|---|
+| **Gitee** | `https://gitee.com/<org>/<repo>/raw/<branch>/<path>` | 是 | 国内速度好，但偶尔有频率限制 |
+| **GitHub** | `https://raw.githubusercontent.com/<org>/<repo>/<branch>/<path>` | 是 | 国际常用，但国内慢 |
+| **自建对象存储** | 自定义 | 视配置 | 推荐：阿里云 OSS / 腾讯云 COS / 七牛 / 华为云 OBS，绑定自定义域名即可 |
+| **自建静态站** | 自定义 | 视配置 | Nginx + Let's Encrypt，零成本 |
+| ❌ **CNB `cnb.cool`** | — | — | **不提供单文件 raw URL**，仅 `git clone` 和 `/-/archive/<branch>.zip` 全量包；不适合做在线更新源 |
+
+> 如果你的源码托管在 CNB（推荐），把构建产物 `manifest.json` + `keshi-x.y.z.zip` **同步推一份到 Gitee 或 OSS**，再在「基础配置」填那个 Gitee / OSS 的 raw URL。
+
+## 6. 签名流程（`tools/sign_manifest.php`）
 
 ```bash
 php tools/sign_manifest.php \
@@ -89,7 +103,7 @@ php tools/sign_manifest.php \
 2. `json_encode` 排序后用私钥做 `openssl_sign`（SHA256，RSA）
 3. base64 后回写 `signature`
 
-## 6. 升级包目录约定
+## 7. 升级包目录约定
 
 `keshi-1.0.2.zip` 解压后白名单（只能出现下列前缀）：
 
@@ -111,7 +125,7 @@ php tools/sign_manifest.php \
 
 `upgrade.sql` 放在升级包根目录或 `code/` 目录下均会被识别。
 
-## 7. 故障排查
+## 8. 故障排查
 
 | 现象 | 排查 |
 |---|---|
@@ -123,7 +137,7 @@ php tools/sign_manifest.php \
 | 升级一直卡在维护模式 | 检查 `runtime/maintenance.flag` 是否残留，可手动删除（不会影响数据）|
 | 回滚后版本号没回退 | `runtime/update_backups/files_*/_meta.json` 被人工改过；用更早的备份目录 |
 
-## 8. 安全承诺
+## 9. 安全承诺
 
 - 升级链路全程 https、DNS 锁、协议白名单、签名校验、路径白名单
 - 所有失败都进 `runtime/log/`，**不**在 runtime 留裸堆栈文件

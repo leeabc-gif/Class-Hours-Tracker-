@@ -58,7 +58,7 @@
 - 🛡️ **维护模式不卡死**：写入 `runtime/maintenance.flag` 用 `LOCK_EX`；注册 `register_shutdown_function` 兜底关闭，避免 PHP fatal 跳过 `finally` 导致永久锁死
 - 🛡️ **维护拦截不再泄露状态**：从 `Base::initialize` 移入 `requireLogin/requireAdmin` 之后，仅对已登录用户返 503，附带 `Retry-After` 头
 - 🛡️ **Manifest 多包拒绝**：`UpdateService::check` 强制 `files.length ≤ 1`，杜绝任意第二个文件绕过 sha256 白名单
-- 💾 **系统参数持久化**：「基础配置」页正式提供 **更新清单地址 `update_manifest_url`** 字段；`settingsSave` 加严格 https + 长度 + SSRF 预校验
+- 💾 **系统参数持久化**：「基础配置」页正式提供 **更新清单地址 `update_manifest_url`** 字段；`settingsSave` 加严格 https + 长度 + SSRF 预校验（默认留空——CNB 仓库本身不提供单文件 raw 直链，推荐同步一份到 Gitee / 自建 OSS 指向那边）
 - 💾 **备份可靠性提升**：`Backup::dump` 在 `SHOW CREATE TABLE` 失败 / 视图 / 权限不足时**直接抛错**，不再静默生成无 DDL 的半成品 SQL；列名加反引号 + ` 转移
 - 💾 **回滚可读性**：拆分 `restored_files` 与 `removed_new_files` 两项返回，前端分别展示「已还原文件」「已删除新文件」
 - 📋 **更新状态可观察**：`updateStatus` 携带上次检查缓存的 `latest_version` / `last_check_at` / `php_version` / `app_version_baseline`；前端在「系统更新」页直接显示，无需每次点「检查更新」
@@ -202,7 +202,7 @@ In Chinese vocational (中职) schools, teacher class-period (课时) and payrol
 - **Maintenance mode cannot get stuck**: flag is written with `LOCK_EX`; a `register_shutdown_function` clears it on PHP fatal
 - **Maintenance no longer leaks state**: moved from `Base::initialize` to `requireLogin/requireAdmin`, only authenticated users get a 503
 - **Manifest multi-package rejected**: `UpdateService::check` enforces `files.length ≤ 1`
-- **Settings persistence**: 「基础配置」 now exposes **`update_manifest_url`**, validated by `settingsSave` (https-only + length + SSRF pre-check)
+- **Settings persistence**: 「基础配置」 now exposes **`update_manifest_url`**, validated by `settingsSave` (https-only + length + SSRF pre-check); default is empty because CNB's web UI does not expose a per-file raw URL — use Gitee / OSS as the update source
 - **Backup reliability**: `Backup::dump` **throws** when `SHOW CREATE TABLE` fails (views / missing privilege) — no silent half-baked dumps
 - **Rollback observability**: splits `restored_files` vs `removed_new_files` in the response
 - **Updatable status is cached**: `updateStatus` carries `latest_version` / `last_check_at` / `php_version` / `app_version_baseline` so the UI doesn't need a manual `check` first
