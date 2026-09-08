@@ -1,0 +1,97 @@
+# ============================================================
+# CNB 云原生构建 (CNB) 流水线配置
+#
+# 触发：git push 任何以 v 开头的 tag (v1.0.0, v1.0.1, v2.0.0-beta ...)
+# 动作：把 release/manifest.json 与 release/keshi-1.0.1.zip(以 tag 名为版本)
+#       自动发布到 CNB Release，公开仓库匿名可下载。
+#
+# 下载链接(发布成功后)：
+#   https://cnb.cool/bmayan/class-hours-tracker/-/releases/latest/download/manifest.json
+#   https://cnb.cool/bmayan/class-hours-tracker/-/releases/latest/download/keshi-<TAG>.zip
+#
+# 认证：CNB_PIPELINE_TOKEN 仓库设置→访问令牌 注入 (CNB CI 内置，无需手动加 secrets)
+# ============================================================
+
+"v*":
+  tag_push:
+    - stages:
+        - name: publish-release-assets
+          image: alpine:3.20
+          script:
+            - set -eu
+            - apk add --no-cache curl jq bash
+            - TAG="${CNB_BRANCH}"          # 形如 v1.0.1
+            - VER="${TAG#v}"               # 形如 1.0.1
+            - REPO="bmayan/class-hours-tracker"
+            - BASE="https://api.cnb.cool"
+
+            - echo "→ publish release for tag $TAG (version $VER)"
+
+            # 1) 在仓库下创建 release (空 release，先建壳)
+            - |
+              CREATE=$(curl -sS -X POST \
+                "$BASE/$REPO/-/releases" \
+                -H "Authorization: Bearer $CNB_PIPELINE_TOKEN" \
+                -H "Content-Type: application/json" \
+                --data "{\"tag_name\":\"$TAG\",\"name\":\"keshi $VER\",\"body\":\"## keshi $VER\n\n自动发布。详见 https://cnb.cool/$REPO\"}")
+              echo "create release response: $CREATE"
+
+            # 2) 取 release_id
+            - |
+              LIST=$(curl -sS "$BASE/$REPO/-/releases" \
+                -H "Authorization: Bearer $CNB_PIPELINE_TOKEN")
+              RELEASE_ID=$(echo "$LIST" | jq -r --arg t "$TAG" \
+                '.data[] | select(.tag_name==$t) | .id' | head -n1)
+              echo "release_id=$RELEASE_ID"
+              if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
+                echo "!! failed to obtain release_id"; exit 1
+              fi
+
+            # 3) 上传每个资产文件
+            - |
+              upload_asset() {
+                local FILE="$1"
+                local NAME="$2"
+                if [ ! -f "$FILE" ]; then echo "!! missing $FILE"; exit 1; fi
+
+                # 3a) 拿到 COS 上传 URL + form 字段
+                local RESP=$(curl -sS -X POST \
+                  "$BASE/$REPO/-/releases/$RELEASE_ID/asset-upload-url" \
+                  -H "Authorization: Bearer $CNB_PIPELINE_TOKEN" \
+                  -H "Content-Type: application/json" \
+                  --data "{\"name\":\"$NAME\"}")
+                local UPLOAD_URL=$(echo "$RESP" | jq -r '.data.upload_url // .data.url // empty')
+                local FORM=$(echo "$RESP" | jq -c '.data.form // .data.fields // {}')
+                if [ -z "$UPLOAD_URL" ]; then echo "!! no upload_url: $RESP"; exit 1; fi
+
+                # 3b) 真正传到 COS (multipart/form-data)
+                local TOKEN=$(echo "$RESP" | jq -r '.data.token // empty')
+                local UPLOAD_KEY=$(echo "$RESP" | jq -r '.data.key // empty')
+
+                curl -sS -X PUT -T "$FILE" \
+                  -H "Content-Type: application/octet-stream" \
+                  "$UPLOAD_URL" >/dev/null
+                if [ -n "$TOKEN" ] && [ -n "$UPLOAD_KEY" ]; then
+                  curl -sS -X POST \
+                    "$BASE/$REPO/-/releases/$RELEASE_ID/asset-upload-confirmation/$TOKEN/$UPLOAD_KEY" \
+                    -H "Authorization: Bearer $CNB_PIPELINE_TOKEN" >/dev/null
+                fi
+                echo "  ↑ uploaded $NAME"
+              }
+
+              upload_asset "release/manifest.json" "manifest.json"
+              upload_asset "release/keshi-${VER}.zip" "keshi-${VER}.zip"
+
+            - echo "✓ done. latest manifest URL:"
+            - echo "  https://cnb.cool/$REPO/-/releases/latest/download/manifest.json"
+
+# 主分支 push 时跑一次"包是否齐全"检查
+main:
+  push:
+    - stages:
+        - name: sanity
+          image: alpine:3.20
+          script:
+            - test -f release/manifest.json
+            - test -f release/keshi-1.0.1.zip
+            - echo "✓ release artifacts present"

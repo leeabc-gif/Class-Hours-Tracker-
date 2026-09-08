@@ -6,6 +6,12 @@
 ---
 
 ## v1.0.1 · 2026-09 · 在线更新安全加固
+### 更新点（patch）
+- **默认更新源切换到 CNB 官方 Release 公开下载**
+  - 仓库根 `.cnb.yml`：push `v*` tag 时自动调 CNB Release API 把 `release/manifest.json` + `release/keshi-<ver>.zip` 发布到仓库 Release
+  - 公开仓库匿名可访问：`https://cnb.cool/bmayan/class-hours-tracker/-/releases/latest/download/manifest.json`
+  - 同步 `database/seed.sql` / `20260908_default_manifest_url.sql` / `config/update_trust.php` / `README.md` / `docs/online_update.md`
+  - 升级 release 时同步用新私钥重签 manifest，公钥同步换到 `config/update_trust.php`
 
 ### 核心目标
 对在线更新与回滚链路做全面代码审查后，按「必须-1/2/3/4/5 → 严重 S-1/S-2 → 中 M-1~M-10 → 轻 L-1~L-8」四档顺序一次性修复。

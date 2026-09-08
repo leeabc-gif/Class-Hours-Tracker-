@@ -86,7 +86,7 @@
 | **GitHub** | `https://raw.githubusercontent.com/<org>/<repo>/<branch>/<path>` | 是 | 国际常用，但国内慢 |
 | **自建对象存储** | 自定义 | 视配置 | 推荐：阿里云 OSS / 腾讯云 COS / 七牛 / 华为云 OBS，绑定自定义域名即可 |
 | **自建静态站** | 自定义 | 视配置 | Nginx + Let's Encrypt，零成本 |
-| ❌ **CNB `cnb.cool`** | — | — | **不提供单文件 raw URL**，仅 `git clone` 和 `/-/archive/<branch>.zip` 全量包；不适合做在线更新源 |
+| ✅ **CNB `cnb.cool`** | `https://cnb.cool/<org>/<repo>/-/releases/latest/download/<asset>` | 是 | 仓库 `.cnb.yml` 在 push `v*` tag 时自动调 `POST /releases/.../asset-upload-url` 上传 `manifest.json` 和 `keshi-<ver>.zip` 到 CNB Release；公开仓库匿名可访问 |
 
 > 如果你的源码托管在 CNB（推荐），把构建产物 `manifest.json` + `keshi-x.y.z.zip` **同步推一份到 Gitee 或 OSS**，再在「基础配置」填那个 Gitee / OSS 的 raw URL。
 
