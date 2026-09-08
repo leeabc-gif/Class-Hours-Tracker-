@@ -18,3 +18,18 @@ Thumbs.db
 
 # ===== 上传/临时 =====
 *.tmp
+
+# ===== 本地测试 / 调试产物（不入库） =====
+/.test_admin.cookie
+/mysql_audit.txt
+/mysql_test.txt
+/pw_out.txt
+/snap.yaml
+
+# ===== IDE / 自动化本地缓存 =====
+/.codebuddy/
+/.playwright-cli/
+
+# ===== 打包输出 =====
+/release/
+/*.zip
