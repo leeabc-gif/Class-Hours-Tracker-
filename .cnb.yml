@@ -50,6 +50,10 @@
             - ASSET_BASE="keshi-${VER}"
             - cd "$WORKSPACE"
             - |
+              if [ -f database/migrations/20260909_v105_version_sync.sql ]; then
+                cp database/migrations/20260909_v105_version_sync.sql upgrade.sql
+              fi
+            - |
               zip -r "release/${ASSET_BASE}.zip" . \
                 -x "runtime/*" \
                 -x "config/installed.php" \
@@ -58,9 +62,11 @@
                 -x ".git/*" \
                 -x "release/*" \
                 -x ".github/*" \
+                -x ".codebuddy/*" \
                 -x "tools/sign_manifest.php" \
                 -x "_env/*"
             - ls -la release/
+            - rm -f upgrade.sql
             - echo "✓ built release/${ASSET_BASE}.zip"
 
         - name: sign-manifest
@@ -82,7 +88,7 @@
                   --tag="$TAG" \
                   --package="release/${ASSET_BASE}.zip" \
                   --private-key=/tmp/manifest_priv.pem \
-                  --changelog-file=CHANGELOG.md \
+                  --changelog-file=PROJECT_CHANGELOG.md \
                   --out=release/manifest.json
                 rm -f /tmp/manifest_priv.pem
               fi

@@ -185,7 +185,7 @@ class ResetDemo
             }
             // app_version 兜底回当前发布版本，避免历史脏值卡在线更新对比
             if (Setting::get('app_version', '') === '') {
-                Setting::set('app_version', '1.0.4');
+                Setting::set('app_version', '1.0.5');
             }
 
             Db::commit();

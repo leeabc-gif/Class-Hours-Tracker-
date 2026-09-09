@@ -35,7 +35,11 @@ jobs:
       - name: Prepare upgrade.sql
         run: |
           mkdir -p release
-          if [ -f database/migrations/20260909_v104_version_sync.sql ]; then
+          if [ -f "database/migrations/20260909_${VER//./}_version_sync.sql" ]; then
+            cp "database/migrations/20260909_${VER//./}_version_sync.sql" upgrade.sql
+          elif [ -f database/migrations/20260909_v105_version_sync.sql ]; then
+            cp database/migrations/20260909_v105_version_sync.sql upgrade.sql
+          elif [ -f database/migrations/20260909_v104_version_sync.sql ]; then
             cp database/migrations/20260909_v104_version_sync.sql upgrade.sql
           fi
           # 将当前版本迁移放在项目根，随后由 zip 一并打包
@@ -80,7 +84,7 @@ jobs:
               --tag="$TAG" \
               --package="release/${ASSET_BASE}.zip" \
               --private-key=/tmp/manifest_priv.pem \
-              --changelog-file=CHANGELOG.md \
+              --changelog-file=PROJECT_CHANGELOG.md \
               --out=release/manifest.json
             rm -f /tmp/manifest_priv.pem
           fi

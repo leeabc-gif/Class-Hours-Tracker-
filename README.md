@@ -51,9 +51,11 @@
 
 ## 📦 最近更新
 
-**即将发布（v1.0.5）· 重置示例数据预览兼容修复**
+**2026-09（v1.0.5）· 在线更新跳转与重置预览兼容修复**
 
 - 🛠️ **修复重置预览报错**：统一使用实际的 `ks_` 数据表名称，解决数据库表存在但预览仍访问 `lesson` 等未加前缀表名的问题。
+- 🔄 **修复在线更新 HTTP 302**：安全支持 CNB/GitHub 合法跳转，并对每次跳转重新执行 URL、DNS 和 SSRF 校验，最多允许 3 次跳转。
+- 🔢 **版本号同步**：代码基线、数据库种子数据、示例数据重置和在线升级迁移统一使用 `1.0.5`。
 
 **2026-09（v1.0.4）· 全选修复与系统版本同步**
 
@@ -223,9 +225,11 @@ In Chinese vocational (中职) schools, teacher class-period (课时) and payrol
 
 ## 🆕 Recent Updates
 
-**Coming soon (v1.0.5) — Reset-preview table-name compatibility fix**
+**2026-09 (v1.0.5) — Online-update redirect and reset-preview compatibility fixes**
 
 - 🛠️ **Fixed reset preview errors**: consistently use the actual `ks_` table names, resolving failures where the database table exists but the preview queried unprefixed names such as `lesson`.
+- 🔄 **Fixed online-update HTTP 302**: safely support valid CNB/GitHub redirects and re-run URL, DNS, and SSRF validation for every hop, with a maximum of 3 redirects.
+- 🔢 **Synchronized version**: code baseline, seed data, demo reset, and online-update migration now consistently use `1.0.5`.
 
 **2026-09 (v1.0.4) — Select-all fix and system-version synchronization**
 
