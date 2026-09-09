@@ -1,0 +1,95 @@
+name: Release
+
+# 触发：推送 v* tag（如 v1.0.2）
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          extensions: zip, openssl
+          tools: composer:false
+
+      - name: Compute version
+        id: v
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VER="${TAG#v}"
+          echo "tag=$TAG"      >> $GITHUB_OUTPUT
+          echo "version=$VER"  >> $GITHUB_OUTPUT
+          echo "asset_base=keshi-$VER" >> $GITHUB_OUTPUT
+
+      - name: Build release zip
+        env:
+          ASSET_BASE: ${{ steps.v.outputs.asset_base }}
+        run: |
+          set -e
+          mkdir -p release
+          # 排除运行期产物、本地配置、安装锁、签名私钥、git 历史
+          zip -r "release/${ASSET_BASE}.zip" . \
+            -x "runtime/*" \
+            -x "config/installed.php" \
+            -x "config/database.php" \
+            -x "public/install/*" \
+            -x ".git/*" \
+            -x "release/*" \
+            -x ".github/*" \
+            -x "tools/sign_manifest.php"
+          ls -la release/
+
+      - name: Prepare upgrade.sql
+        run: |
+          mkdir -p release
+          if [ -f database/migrations/20260909_v102_github_default_and_reset.sql ]; then
+            cp database/migrations/20260909_v102_github_default_and_reset.sql release/upgrade.sql
+          fi
+          # 注：未来版本如果只新增迁移文件，可在 sign_manifest 之前合并所有 migrations
+          # 当前实现只把 v1.0.2 的迁移打包进 release/upgrade.sql
+
+      - name: Sign manifest
+        id: sign
+        env:
+          MANIFEST_PRIVATE_KEY: ${{ secrets.MANIFEST_PRIVATE_KEY }}
+          TAG: ${{ steps.v.outputs.tag }}
+          VER: ${{ steps.v.outputs.version }}
+          ASSET_BASE: ${{ steps.v.outputs.asset_base }}
+        run: |
+          set -e
+          if [ -z "$MANIFEST_PRIVATE_KEY" ]; then
+            echo "::warning::MANIFEST_PRIVATE_KEY 未配置，将发布未签名的 manifest（仅供内测）"
+          else
+            echo "$MANIFEST_PRIVATE_KEY" > /tmp/manifest_priv.pem
+            php tools/sign_manifest.php \
+              --version="$VER" \
+              --tag="$TAG" \
+              --package="release/${ASSET_BASE}.zip" \
+              --private-key=/tmp/manifest_priv.pem \
+              --changelog-file=CHANGELOG.md \
+              --out=release/manifest.json
+            rm -f /tmp/manifest_priv.pem
+          fi
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.v.outputs.tag }}
+          name: ${{ steps.v.outputs.tag }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release/manifest.json
+            release/keshi-${{ steps.v.outputs.version }}.zip

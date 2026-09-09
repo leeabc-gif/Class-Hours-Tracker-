@@ -944,3 +944,30 @@
 * 模板引擎改进
 * 支持PSR-3日志规范
 * RC1版本取消了5.0多个字段批量数组查询的方式
+## v1.0.2 (2026-09-09) · GitHub Releases 更新源 + 一键重置示例数据
+
+### 新增
+- 基础配置「在线更新源」三选一：github（默认）/ cnb / custom，默认指向 https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/latest/download/manifest.json
+- update_github_token 配置（不回显明文），UpdateService 自动注入 Authorization: Bearer 头
+- Admin::resetDemoData() 一键重置示例数据；清空 8 张业务表，保留 admin 账号（≥1，密码回 admin123）+ 系统配置 + 院系 + 学期 + 非 admin 教师 + 1 门示范课程
+- 三重保险：admin 角色 + 输入 RESET + 输入当前管理员密码，全程事务 + 维护模式
+- ResetDemo 服务 application/common/service/ResetDemo.php + Admin::resetDemoDataPreview() 预览接口
+- ks_course.is_demo 字段（迁移 20260909_v102_github_default_and_reset.sql，幂等）
+- ks_setting.update_source / update_github_token 两个新配置键
+- .github/workflows/release.yml：推送 v* tag 自动打包 + 签名 + 上传 GitHub Release
+- tools/sign_manifest.php CI 模式：--version --package --private-key --changelog-file --out 一次性出已签名 manifest
+- docs/online_update.md 增补 GitHub Releases 章节
+
+### 改进
+- UpdateService::httpGet：401/403/404/429 给出针对性错误提示（私有仓库/限流/资产名错配/未授权）
+- UpdateService 增加 setBearerToken / getBearerToken 静态方法
+- Admin::SETTING_KEYS 白名单新增 update_source / update_github_token
+- Admin::resolveManifestUrl() 根据 update_source 自动拼装 manifest URL
+- 基础配置页 + 系统更新页 UI 提示当前更新源
+- 系统更新页 + 基础配置页均增加"一键重置示例数据"入口（红色危险按钮 + 二次弹窗）
+- 签名工具同时支持旧用法（手动 JSON + 私钥）
+
+### 同步发布
+- v1.0.2 tag 同步推送到 CNB (origin) + GitHub (github) 双远程
+- CHANGELOG.md / PROJECT_CHANGELOG.md / README.md / docs/online_update.md 同步更新
+

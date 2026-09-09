@@ -44,6 +44,23 @@ class UpdateService
     const MAX_BACKUPS  = 5;          // 保留最近 N 份文件备份
 
     /**
+     * 进程级 Bearer Token：管理员在「基础配置」填了 GitHub PAT 后，
+     * 控制器会在调用 check/download 前 setBearerToken，httpGet 自动注入。
+     * 私有仓库或提升限流时用，公开仓库可不填。
+     */
+    protected static $bearerToken = '';
+
+    public static function setBearerToken($t)
+    {
+        self::$bearerToken = trim((string) $t);
+    }
+
+    public static function getBearerToken()
+    {
+        return self::$bearerToken;
+    }
+
+    /**
      * 当前运行版本：优先读 ks_setting.app_version，缺失回退到 config('app.version')
      */
     public static function currentVersion()
@@ -806,6 +823,15 @@ class UpdateService
         if ($port <= 0) {
             $port = ($scheme === 'https') ? 443 : 80;
         }
+        $headers = [
+            'Accept: application/json, application/octet-stream, */*',
+            'X-Keshi-Updater: 1',
+        ];
+        // v1.0.2+：管理员在「基础配置」填的 GitHub PAT 会通过 setBearerToken 注入
+        if (self::$bearerToken !== '') {
+            $headers[] = 'Authorization: Bearer ' . self::$bearerToken;
+            // GitHub API 建议带 UA，否则会被限流
+        }
         curl_setopt_array($ch, [
             CURLOPT_URL            => $url,
             CURLOPT_RESOLVE        => [$host . ':' . $port . ':' . $primaryIp],
@@ -820,6 +846,7 @@ class UpdateService
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_USERAGENT      => 'Keshi-Updater/1.0',
+            CURLOPT_HTTPHEADER     => $headers,
             // 限制协议：仅 HTTP/HTTPS，绝不允许 file:// / gopher:// / ftp://
             CURLOPT_PROTOCOLS      => CURLPROTO_HTTP | CURLPROTO_HTTPS,
             CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
@@ -836,6 +863,22 @@ class UpdateService
         if ($err !== '') {
             @unlink($tmp);
             throw new \RuntimeException('下载' . $label . '失败：' . $err);
+        }
+        if ($code === 401) {
+            @unlink($tmp);
+            throw new \RuntimeException('下载' . $label . '失败：HTTP 401 未授权。若为 GitHub 私有仓库，请在「基础配置 → 更新源 → GitHub Token」填写有 repo 权限的 PAT；公开仓库请清空 Token。');
+        }
+        if ($code === 403) {
+            @unlink($tmp);
+            throw new \RuntimeException('下载' . $label . '失败：HTTP 403 拒绝访问。常见原因：GitHub 限流（请配置 PAT）/ IP 被封禁 / 仓库不存在或资产名错误。');
+        }
+        if ($code === 404) {
+            @unlink($tmp);
+            throw new \RuntimeException('下载' . $label . '失败：HTTP 404 资源不存在。请检查 manifest URL 与资产名是否匹配 GitHub Release 中的实际文件。');
+        }
+        if ($code === 429) {
+            @unlink($tmp);
+            throw new \RuntimeException('下载' . $label . '失败：HTTP 429 触发限流。请在「基础配置 → 更新源」配置 GitHub Token 后再试。');
         }
         if ($code < 200 || $code >= 300) {
             @unlink($tmp);

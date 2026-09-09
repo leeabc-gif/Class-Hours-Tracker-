@@ -1,10 +1,43 @@
-# 课时通 · 变更记录
+﻿# 课时通 · 变更记录
 
 > 这是 **本项目自身** 的版本变更记录，区别于框架自身的 `CHANGELOG.md`（后者是 ThinkPHP 5.1 LTS 框架变更）。
 > 版本号采用 `1.0.x`（次版本 = 安全/兼容性升级；补丁号 = 修复/小优化）。
 
 ---
 
+
+## v1.0.2 · 2026-09-09 · GitHub Releases 更新源 + 一键重置示例数据
+
+### 新功能（minor）
+- **GitHub Releases 作为默认更新源**：
+  - 「基础配置 → 在线更新源」下拉：github（默认）/ cnb（v1.0.1 兼容）/ custom
+  - 默认清单 URL：https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/latest/download/manifest.json
+  - 新配置 `update_github_token`（不回显明文），私有仓库或限流时填写
+  - `UpdateService::httpGet` 自动注入 `Authorization: Bearer ...`
+  - 401/403/404/429 返回更具体的错误提示
+- **一键重置示例数据**（`Admin::resetDemoData` + `ResetDemo` 服务）：
+  - 入口：「基础配置 → 危险操作」+「系统更新」页底部
+  - 清空 8 张业务表（lessons / classes / 课程非示范 / AI / 操作日志 / 收藏等）
+  - 保留：admin 账号（≥1，密码回 admin123）+ ks_setting + 院系 + 学期 + 非 admin 教师 + 1 门示范课程
+  - 三重保险：admin 角色 + 输入 `RESET` + 输入当前管理员密码
+  - 全程事务 + 进入维护模式
+- **GitHub Actions CI**：`.github/workflows/release.yml` 监听 `v*` tag，自动构建 `release/keshi-<ver>.zip` + 签名 `release/manifest.json`，用 `softprops/action-gh-release@v2` 发布
+- **签名工具升级**：`tools/sign_manifest.php` 支持 CI 模式（`--version --package --private-key --changelog-file --out`），单行命令直接出已签名 manifest
+- **数据库迁移**：`database/migrations/20260909_v102_github_default_and_reset.sql`
+  - ks_course 新增 `is_demo TINYINT(1)` 字段（幂等）
+  - id=1 的「工业机器人导论」标记为 is_demo=1
+  - 默认 update_source=github、update_manifest_url 切到 GitHub Releases
+  - 兜底出厂 ks_setting（仅补空键，不覆盖 update_manifest_url）
+- **UI 增强**：
+  - 基础配置页增加「在线更新源」下拉 + GitHub Token 字段 + 危险操作区
+  - 系统更新页增加更新源提示 + 危险操作区
+- **文档**：`README.md` 中英文双版同步补 v1.0.2 介绍
+
+### 兼容性
+- 100% 兼容 v1.0.1，管理员无感知升级
+- 现有 CNB 通道仍可在「基础配置」切换回
+- 旧版 `sign_manifest.php` 调用方式 100% 兼容
+- `manifest.example.json` 字段未变
 ## v1.0.1 · 2026-09 · 在线更新安全加固
 ### 更新点（patch）
 - **默认更新源切换到 CNB 官方 Release 公开下载**

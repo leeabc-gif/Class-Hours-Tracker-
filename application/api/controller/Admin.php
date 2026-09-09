@@ -845,18 +845,61 @@ class Admin extends Base
     const SETTING_KEYS = [
         'school_name', 'global_price', 'week_standard_periods',
         'ai_enabled', 'ai_provider', 'ai_api_url', 'ai_api_key', 'ai_model',
-        'update_manifest_url',
+        'update_manifest_url', 'update_source', 'update_github_token',
     ];
+
+    /**
+     * GitHub Releases 更新源预设 URL（默认仓库 leeabc-gif/Class-Hours-Tracker-）
+     * 注意：GitHub 公开 release 的资产 URL 形式是
+     *   https://github.com/<owner>/<repo>/releases/download/<tag>/<asset>
+     * GitHub 的 releases/latest 是 HTML 跳转页，不会直接给出 manifest.json，
+     * 所以这里用具体的 v* tag + 资产名，tag 会在 CI 中以环境变量传入。
+     * manifest 资产名统一用 manifest.json（与现有 UpdateService 字段一致）。
+     */
+    public static function defaultGithubManifestUrl()
+    {
+        $tag = trim((string) config('app.version', '1.0.2'));
+        // 公开仓库 latest 指向最新 tag，CI 会在每次 push v* 时把 manifest.json 推上去
+        return 'https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/latest/download/manifest.json';
+    }
+
+    /**
+     * 根据 update_source 拼出实际可用的 manifest URL
+     * - github：返回 defaultGithubManifestUrl()（可被管理员在 update_manifest_url 覆写）
+     * - cnb：返回历史默认 cnb.cool 源（保留兼容）
+     * - custom：返回 update_manifest_url 自定义值
+     * - 空 / 其他：返回 update_manifest_url 现存值（兜底）
+     */
+    public static function resolveManifestUrl()
+    {
+        $source = (string) Setting::get('update_source', '');
+        $custom = (string) Setting::get('update_manifest_url', '');
+        if ($source === 'github') {
+            // 若管理员没覆写过 manifest URL，则用 GitHub 默认；否则尊重其手填
+            return $custom !== '' ? $custom : self::defaultGithubManifestUrl();
+        }
+        if ($source === 'cnb') {
+            return $custom !== '' ? $custom
+                : 'https://cnb.cool/bmayan/class-hours-tracker/-/releases/latest/download/manifest.json';
+        }
+        if ($source === 'custom') {
+            return $custom;
+        }
+        return $custom;
+    }
 
     public function settings()
     {
         $all = Setting::all();
         $out = [];
         foreach (self::SETTING_KEYS as $k) {
-            if ($k === 'ai_api_key') continue;
+            // 敏感字段不回显明文
+            if ($k === 'ai_api_key' || $k === 'update_github_token') continue;
             $out[$k] = isset($all[$k]) ? $all[$k] : '';
         }
-        $out['ai_api_key_configured'] = trim((string)Setting::get('ai_api_key', '')) !== '';
+        $out['ai_api_key_configured']   = trim((string)Setting::get('ai_api_key', ''))       !== '';
+        $out['update_github_token_configured'] = trim((string)Setting::get('update_github_token', '')) !== '';
+        $out['resolved_manifest_url']   = self::resolveManifestUrl();
         return $this->ok($out);
     }
 
@@ -868,11 +911,17 @@ class Admin extends Base
             Setting::set('ai_api_key', '');
             $saved[] = 'ai_api_key';
         }
+        if (!empty($data['update_github_token_clear'])) {
+            Setting::set('update_github_token', '');
+            $saved[] = 'update_github_token';
+        }
         foreach (self::SETTING_KEYS as $k) {
             if (!array_key_exists($k, $data)) continue;
             $value = trim((string)$data[$k]);
             if ($k === 'ai_api_key' && $value === '' && empty($data['ai_api_key_clear'])) continue;
             if ($k === 'ai_api_key_clear') continue;
+            if ($k === 'update_github_token' && $value === '' && empty($data['update_github_token_clear'])) continue;
+            if ($k === 'update_github_token_clear') continue;
             if ($k === 'ai_enabled' && !in_array($value, ['0', '1'], true)) {
                 return $this->fail('AI 总开关值不合法');
             }
@@ -881,6 +930,27 @@ class Admin extends Base
             }
             if ($k === 'ai_api_url' && strlen($value) > 500) {
                 return $this->fail('系统模型接口地址不能超过 500 个字符');
+            }
+            if ($k === 'update_source') {
+                if (!in_array($value, ['github', 'cnb', 'custom', ''], true)) {
+                    return $this->fail('更新源类型不合法（github / cnb / custom）');
+                }
+                // 切到 github 时把空 manifest 兜底填上默认 URL，方便小白开箱即用
+                if ($value === 'github') {
+                    $currentCustom = (string) Setting::get('update_manifest_url', '');
+                    if ($currentCustom === '') {
+                        Setting::set('update_manifest_url', self::defaultGithubManifestUrl());
+                    }
+                }
+                Setting::set('update_source', $value);
+                $saved[] = 'update_source';
+                continue;
+            }
+            if ($k === 'update_github_token' && $value !== '') {
+                // GitHub PAT 形式校验：ghp_/gho_/ghu_/ghs_/ghr_ 前缀 36+ 位；放宽到 ≥ 30 位
+                if (strlen($value) < 20 || strlen($value) > 200) {
+                    return $this->fail('GitHub Token 长度不合理（20-200 字符）');
+                }
             }
             if ($k === 'update_manifest_url' && $value !== '') {
                 // 强制 https：清单必须经签名/强校验，且 SSRF 防护会更稳
@@ -989,7 +1059,9 @@ class Admin extends Base
         return $this->ok([
             'current_version'   => UpdateService::currentVersion(),
             'maintenance'       => Base::underMaintenance(),
-            'manifest_url'      => (string) Setting::get('update_manifest_url', ''),
+            'manifest_url'      => self::resolveManifestUrl(),
+            'manifest_url_custom' => (string) Setting::get('update_manifest_url', ''),
+            'update_source'     => (string) Setting::get('update_source', ''),
             'app_version_baseline' => (string) config('app.version', '1.0.0'),
             'can_rollback'      => UpdateService::hasFileBackup(),
             'backups'           => UpdateService::listBackups(),
@@ -1007,11 +1079,13 @@ class Admin extends Base
     {
         $manifestUrl = trim((string) $this->input('manifest_url', ''));
         if ($manifestUrl === '') {
-            $manifestUrl = (string) Setting::get('update_manifest_url', '');
+            $manifestUrl = self::resolveManifestUrl();
         }
         if ($manifestUrl === '') {
-            return $this->fail('请先在系统设置中填写更新清单地址（manifest_url）。');
+            return $this->fail('请先在系统设置中选择更新源或填写更新清单地址（manifest_url）。');
         }
+        // v1.0.2：注入管理员配置的 GitHub Token（公开仓库可空）
+        UpdateService::setBearerToken((string) Setting::get('update_github_token', ''));
         try {
             $info = UpdateService::check($manifestUrl);
             // L-4：把 check 结果缓存下来，updateStatus 也能复用
@@ -1035,7 +1109,7 @@ class Admin extends Base
         $data = $this->jsonInput();
         $manifestUrl = trim(isset($data['manifest_url']) ? (string) $data['manifest_url'] : '');
         if ($manifestUrl === '') {
-            $manifestUrl = (string) Setting::get('update_manifest_url', '');
+            $manifestUrl = self::resolveManifestUrl();
         }
         if ($manifestUrl === '') {
             return $this->fail('缺少更新清单地址。');
@@ -1045,6 +1119,8 @@ class Admin extends Base
         if (!$lock) {
             return $this->fail('已有更新任务正在进行，请稍后再试。');
         }
+        // v1.0.2：注入 GitHub Token
+        UpdateService::setBearerToken((string) Setting::get('update_github_token', ''));
         try {
             $info = UpdateService::check($manifestUrl);
             if (empty($info['files'])) {
@@ -1177,5 +1253,61 @@ class Admin extends Base
         }
         $this->log('maintenance', 'system', 0, $state === 1 ? '开启维护模式' : '关闭维护模式');
         return $this->ok(['maintenance' => Base::underMaintenance()]);
+    }
+
+    // ============================================================
+    // 一键重置示例数据（v1.0.2+）
+    // ============================================================
+
+    /**
+     * 估算重置范围（不执行）
+     */
+    public function resetDemoDataPreview()
+    {
+        $tables = \app\common\service\ResetDemo::snapshot();
+        return $this->ok($tables);
+    }
+
+    /**
+     * 一键重置：保留 admin 账号 + 1 门示范课程 + 基础系统设置，
+     * 清空其他业务表。
+     *
+     * 三重保险：
+     *  1. 必须是 admin 角色（已由 initialize() 拦截）
+     *  2. 前端必须二次确认（传 confirm='RESET'）
+     *  3. 必须再输一次当前管理员密码
+     */
+    public function resetDemoData()
+    {
+        $data = $this->jsonInput();
+        $confirm  = trim(isset($data['confirm'])  ? (string) $data['confirm']  : '');
+        $password = trim(isset($data['password']) ? (string) $data['password'] : '');
+        if ($confirm !== 'RESET') {
+            return $this->fail('请在前端弹窗中输入 RESET 以确认操作');
+        }
+        if ($password === '') {
+            return $this->fail('请输入当前管理员密码以确认身份');
+        }
+        if (!$this->user->checkPassword($password)) {
+            return $this->fail('管理员密码错误，操作已拒绝');
+        }
+
+        // 进入维护模式，防止教师在重置过程中继续操作
+        Base::setMaintenance(true);
+        try {
+            $r = \app\common\service\ResetDemo::run($this->user);
+        } catch (\Throwable $e) {
+            Base::setMaintenance(false);
+            \think\facade\Log::error('[reset_demo] failed: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return $this->fail('重置失败：' . $e->getMessage());
+        }
+        Base::setMaintenance(false);
+        $this->log('reset_demo', 'system', 0, sprintf(
+            '一键重置示例数据：保留 admin=%d，保留示范课程 id=%s，清理 %d 张业务表共 %d 行；保留 ks_setting/ks_department/ks_term/ks_teacher(admin)',
+            $r['admin_id'], $r['kept_course_id'], count($r['tables']), $r['rows']
+        ));
+        return $this->ok($r, '已重置为示例数据，系统已自动恢复运行');
     }
 }

@@ -2,7 +2,7 @@
 # CNB 云原生构建 (CNB) 流水线配置
 #
 # 触发：git push 任何以 v 开头的 tag (v1.0.0, v1.0.1, v2.0.0-beta ...)
-# 动作：把 release/manifest.json 与 release/keshi-1.0.1.zip(以 tag 名为版本)
+# 动作：把 release/manifest.json 与 release/keshi-<VER>.zip(以 tag 名为版本)
 #       自动发布到 CNB Release，公开仓库匿名可下载。
 #
 # 下载链接(发布成功后)：
@@ -10,6 +10,10 @@
 #   https://cnb.cool/bmayan/class-hours-tracker/-/releases/latest/download/keshi-<TAG>.zip
 #
 # 认证：CNB_PIPELINE_TOKEN 仓库设置→访问令牌 注入 (CNB CI 内置，无需手动加 secrets)
+#
+# v1.0.2+ 注意：
+#   - 默认更新源已切到 GitHub Releases（.github/workflows/release.yml）。
+#   - 本配置作为 CNB 兼容通道保留，管理员可在「基础配置 → 更新源」切回 cnb。
 # ============================================================
 
 "v*":

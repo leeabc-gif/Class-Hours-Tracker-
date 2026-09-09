@@ -51,6 +51,16 @@
 
 ## 📦 最近更新
 
+**2026-09（v1.0.2）· GitHub Releases 更新源 + 一键重置示例数据**
+
+- 🐙 **默认走 GitHub Releases**：「基础配置 → 在线更新源」新增 `github / cnb / custom` 三选一下拉，**默认**指向 `github.com/leeabc-gif/Class-Hours-Tracker-/releases/latest/download/manifest.json`；配套 `.github/workflows/release.yml`，**推送 `v*` tag 时自动构建** `release/keshi-<ver>.zip` + `release/manifest.json`（用 `tools/sign_manifest.php` 走 RSA-SHA256 签名），并以 GitHub Actions 的 `softprops/action-gh-release@v2` 发布为 Release 资产
+- 🔑 **GitHub Token 字段**：`update_github_token` 配置（不回显明文，公开仓库可空），`UpdateService::httpGet` 自动注入 `Authorization: Bearer ...` 头；针对 401/403/404/429 给出更清晰的错误提示（私有仓库 / 限流 / 资产名错配）
+- 🛡️ **降级兼容**：`cnb` 源（v1.0.1 的 CNB 通道）作为兜底保留，管理员随时可在「基础配置」切换；`custom` 选项允许指向自建对象存储或 Gitee raw
+- 🧹 **签名工具升级**：`tools/sign_manifest.php` 新增 CI 模式（`--version --package --private-key --changelog-file --out`），GitHub Actions 一行命令直接产出已签名 manifest；旧用法（手动 JSON + 私钥）100% 兼容
+- ♻️ **一键重置示例数据**：新增「基础配置 → 危险操作」与「系统更新」页的 **一键重置示例数据** 按钮，**清空全部业务表**（课时/班级/AI 会话/操作日志等 8 张表），**仅保留** 管理员账号（admin 至少留 1 个，密码回 `admin123`）、系统配置、院系、学期、教师中的非 admin、**1 门示范课程**（`工业机器人导论`，由 `ks_course.is_demo=1` 标识）；三重保险（admin 角色 + 输 `RESET` + 输当前管理员密码），全程事务 + 维护模式
+- 🗄️ **数据库迁移**：`database/migrations/20260909_v102_github_default_and_reset.sql` 幂等新增 `ks_course.is_demo` 字段（并把 id=1 的 `工业机器人导论` 标记为示范），默认值切换为 GitHub
+- 🔄 **同步发布**：v1.0.2 tag 同步推送到 CNB（`origin`）和 GitHub（`github`）双仓库，CHANGELOG 与 PROJECT_CHANGELOG 同步更新
+
 **2026-09（v1.0.1）· 在线更新安全加固 + 系统参数持久化**
 
 - 🛡️ **CSRF 防护真上线**：新增全局 `CsrfVerify` 中间件，所有 `POST/PUT/DELETE/PATCH` 必须携带 `X-CSRF-Token`；前端 `api()` 自动注入；登录页白名单；`Cookie` 增加 `HttpOnly` + `SameSite=Lax`；遇 419 自动重新拉取 token
@@ -194,6 +204,16 @@ In Chinese vocational (中职) schools, teacher class-period (课时) and payrol
 - 📱 **Responsive UI**: Bootstrap 5 + Chart.js — works on desktop and mobile
 
 ## 🆕 Recent Updates
+
+**2026-09 (v1.0.2) — GitHub Releases channel + one-click demo-data reset**
+
+- 🐙 **Default update source switched to GitHub Releases**: a new `github / cnb / custom` selector in 「基础配置 → 在线更新源」, defaulting to `github.com/leeabc-gif/Class-Hours-Tracker-/releases/latest/download/manifest.json`. Ships with `.github/workflows/release.yml` — every `v*` tag push triggers an automated build of `release/keshi-<ver>.zip` + a signed `release/manifest.json` (RSA-SHA256 via `tools/sign_manifest.php`), then publishes them as Release assets via `softprops/action-gh-release@v2`
+- 🔑 **GitHub Token field**: `update_github_token` config slot (masked in API responses, optional for public repos). `UpdateService::httpGet` now injects `Authorization: Bearer ...` and produces clearer 401/403/404/429 error messages (private repo / rate-limit / asset-name mismatch)
+- 🛡️ **Backwards compatible**: the v1.0.1 **CNB** channel is retained as a fallback — admins can switch in 「基础配置」 at any time. The `custom` option allows pointing to your own object store (or Gitee raw)
+- 🧹 **Signer upgrade**: `tools/sign_manifest.php` gains a CI mode (`--version --package --private-key --changelog-file --out`) so GitHub Actions can mint a signed manifest in one line. The legacy "hand-edit JSON + private key" flow still works 100%
+- ♻️ **One-click demo-data reset**: new button in 「基础配置 → 危险操作」 and the 「系统更新」 page. **Wipes 8 business tables** (lessons / classes / AI conversations / operation logs …) and **keeps** the admin accounts (≥ 1 admin preserved, password reset to `admin123`), system settings, departments, terms, non-admin teachers, and **1 demo course** (`工业机器人导论`, flagged by `ks_course.is_demo=1`). Triple guard (admin role + type `RESET` + current admin password), all under a transaction inside maintenance mode
+- 🗄️ **DB migration**: `database/migrations/20260909_v102_github_default_and_reset.sql` idempotently adds `ks_course.is_demo`, marks course id=1 as the demo, and switches the default `update_source` / `update_manifest_url` to GitHub
+- 🔄 **Dual-remote publish**: the `v1.0.2` tag is pushed to both `origin` (CNB) and `github` remotes; `CHANGELOG.md` and `PROJECT_CHANGELOG.md` are kept in sync
 
 **2026-09 (v1.0.1) — Online updater security hardening**
 

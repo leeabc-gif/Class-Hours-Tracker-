@@ -1931,12 +1931,46 @@
         <div class="col-6"><label class="form-label">系统模型名称</label><div class="input-group"><input id="cfModel" class="form-control" placeholder="如：gpt-4o-mini" list="cfModelList"><button class="btn btn-outline-secondary" type="button" onclick="KS.fetchSysModels()" title="根据接口地址和 Key 自动拉取模型列表"><i class="bi bi-arrow-down-circle me-1"></i>拉取</button></div><datalist id="cfModelList"></datalist></div></div>
         <div class="form-check mt-2"><input class="form-check-input" type="checkbox" id="cfKeyClear"><label class="form-check-label" for="cfKeyClear">清除已保存的系统 Key</label></div>
         <div class="small text-muted mt-2" id="cfKeyStatus">系统 Key 状态：读取中…</div>
-        <div class="mb-2 mt-3"><label class="form-label">在线更新清单地址 (manifest.json)</label>
+        <div class="mt-3"><label class="form-label">在线更新源</label>
+          <select id="cfUpdateSource" class="form-select" onchange="App.onUpdateSourceChange()">
+            <option value="github">GitHub Releases（默认推荐）</option>
+            <option value="cnb">CNB 官方 Release（v1.0.1 兼容通道）</option>
+            <option value="custom">自定义（自填 manifest URL）</option>
+          </select>
+          <div class="small text-muted mt-1">切换后会立即接管「系统更新」页的检查/下载源，GitHub 私有仓库需配合下方 Token。</div>
+        </div>
+        <div class="mb-2 mt-3"><label class="form-label">更新清单地址 (manifest.json)</label>
           <input id="cfUpdateUrl" class="form-control" placeholder="https://update.example.com/manifest.json（需 https，支持签名校验）"></div>
-        <div class="small text-muted">填写后，管理员后台「系统更新」页会直接使用该地址作为检查/下载源。</div>
-        <button class="btn btn-primary mt-2" onclick="KS.saveSettings()"><i class="bi bi-check me-1"></i>保存系统参数</button></div></div></div>
+        <div class="row g-2"><div class="col-8"><label class="form-label">GitHub Personal Access Token（可选）</label><input id="cfGhToken" type="password" class="form-control" placeholder="留空可访问公开仓库，私有仓库或提升限流时填写"></div>
+        <div class="col-4 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" id="cfGhTokenClear"><label class="form-check-label" for="cfGhTokenClear">清除 Token</label></div></div></div>
+        <div class="small text-muted" id="cfGhTokenStatus">GitHub Token 状态：读取中…</div>
+        <button class="btn btn-primary mt-2" onclick="KS.saveSettings()"><i class="bi bi-check me-1"></i>保存系统参数</button></div>
+        <div class="card mt-3 border-danger"><div class="card-h bg-danger bg-opacity-10"><i class="bi bi-exclamation-octagon text-danger"></i><span class="tt text-danger">危险操作</span></div>
+        <div class="card-b">
+          <div class="mb-2">一键重置为系统示例数据：<b>清空全部业务表</b>（课时/班级/AI 会话/操作日志），<b>仅保留</b>：
+            <ul class="mb-2 small">
+              <li>所有管理员账号（admin 至少保留 1 个，密码重置为 admin123）</li>
+              <li>系统配置（ks_setting：学校名称、单价、AI 等基础项）</li>
+              <li>院系、学期、教师中的非 admin</li>
+              <li>1 门示范课程：<b>工业机器人导论</b>（便于教学展示）</li>
+            </ul>
+          </div>
+          <button class="btn btn-outline-danger" onclick="KS.resetDemoData()"><i class="bi bi-arrow-counterclockwise me-1"></i>一键重置示例数据</button>
+        </div></div>
+        </div></div>
     </div>`;
     loadDeptsTable(); loadClassesTable(); loadTermsTable(); loadAdminCoursesTable(); loadSettingsForm();
+  };
+  App.onUpdateSourceChange=function(){
+    const v=$('#cfUpdateSource').value;
+    const hint={
+      github:'切换为 GitHub Releases（推荐）。如未手动填过清单地址，将自动使用默认 GitHub 资产 URL。',
+      cnb:'切换为 CNB 官方 Release（v1.0.1 兼容通道）。',
+      custom:'切换为自定义：必须手动填写「更新清单地址」才可使用。'
+    }[$('#cfUpdateSource').selectedIndex];
+    // 仅做文案提示
+    const el=$('#cfGhTokenStatus');
+    if(el) el.textContent='GitHub Token 状态：'+(v==='github'?'（建议配置公开仓库可留空）':'（仅 GitHub 源需要）') + '　提示：' + hint;
   };
   async function loadClassesTable(){
     const tb=$('#classTbody'); if(!tb)return;
@@ -2079,6 +2113,8 @@
     $('#cfUrl').value=s.ai_api_url||''; $('#cfKey').value=''; $('#cfModel').value=s.ai_model||'';
     $('#cfKeyStatus').textContent='系统 Key 状态：'+(s.ai_api_key_configured?'已配置（页面不显示明文）':'未配置');
     const updEl=$('#cfUpdateUrl'); if(updEl) updEl.value=s.update_manifest_url||'';
+    const srcEl=$('#cfUpdateSource'); if(srcEl){ srcEl.value=s.update_source||'github'; App.onUpdateSourceChange(); }
+    const ghEl=$('#cfGhTokenStatus'); if(ghEl) ghEl.textContent='GitHub Token 状态：'+(s.update_github_token_configured?'已配置（页面不显示明文）':'未配置');
   }
   App.fetchSysModels=async function(){
     const url=$('#cfUrl').value.trim(), key=$('#cfKey').value.trim();
@@ -2098,11 +2134,65 @@
     const payload={ school_name:$('#cfSchool').value.trim(), global_price:$('#cfPrice').value, week_standard_periods:$('#cfStd').value,
       ai_enabled:$('#cfAi').value, ai_provider:$('#cfProv').value.trim(), ai_api_url:$('#cfUrl').value.trim(), ai_model:$('#cfModel').value.trim(),
       ai_api_key_clear:$('#cfKeyClear').checked?1:0,
-      update_manifest_url: ($('#cfUpdateUrl')?$('#cfUpdateUrl').value.trim():'') };
+      update_manifest_url: ($('#cfUpdateUrl')?$('#cfUpdateUrl').value.trim():''),
+      update_source: ($('#cfUpdateSource')?$('#cfUpdateSource').value:'github'),
+      update_github_token_clear:$('#cfGhTokenClear')?($('#cfGhTokenClear').checked?1:0):0
+    };
     const key=$('#cfKey').value.trim();
     if(key) payload.ai_api_key=key;
+    const ghToken=($('#cfGhToken')?$('#cfGhToken').value.trim():'');
+    if(ghToken) payload.update_github_token=ghToken;
     const res=await POST('/api/admin/settingsSave',payload);
-    if(res.code===0){toast('系统参数已保存'); refreshBootTerms();} else toast(res.msg,'err');
+    if(res.code===0){toast('系统参数已保存'); refreshBootTerms(); loadSettingsForm();} else toast(res.msg,'err');
+  };
+
+  /**
+   * 一键重置示例数据：弹窗 → 输入 RESET + 管理员密码 → 二次确认
+   */
+  App.resetDemoData=async function(){
+    // 先做一次预演
+    const pre=await GET('/api/admin/resetDemoDataPreview');
+    if(pre.code!==0){toast(pre.msg||'无法获取重置预览','err');return;}
+    const p=pre.data||{};
+    if(!p.admin_count){toast('当前没有可用的管理员账号，重置已拒绝','err');return;}
+    const html=`<div class="alert alert-danger small"><i class="bi bi-exclamation-triangle me-1"></i>此操作会<b>立即清空</b>以下业务表：</div>
+      <ul class="small">
+        <li>课时记录：<b>${p.tables.ks_lesson||0}</b> 条</li>
+        <li>班级：<b>${p.tables.ks_class||0}</b> 个</li>
+        <li>课程（非示范）：<b>${p.tables.ks_course||0}</b> 门</li>
+        <li>AI 会话 / 消息 / 配置：${(p.tables.ks_ai_conversation||0)+(p.tables.ks_ai_message||0)+(p.tables.ks_teacher_ai_config||0)} 条</li>
+        <li>操作日志：<b>${p.tables.ks_operation_log||0}</b> 条</li>
+        <li>常用课程收藏：<b>${p.tables.ks_course_favorite||0}</b> 条</li>
+      </ul>
+      <div class="alert alert-info small"><i class="bi bi-info-circle me-1"></i>将保留：管理员账号（${p.admin_count} 个）、院系/学期、所有非 admin 教师、1 门示范课程（${p.demo_course_name||'工业机器人导论'}）。</div>
+      <div class="mb-2"><label class="form-label">请输入 <code>RESET</code> 二次确认</label><input id="rdConfirm" class="form-control" placeholder="RESET"></div>
+      <div class="mb-2"><label class="form-label">请输入当前管理员密码</label><input id="rdPwd" type="password" class="form-control" placeholder="管理员登录密码"></div>`;
+    openModal('一键重置示例数据（不可恢复）', html, [
+      {t:'取消', c:'btn-light', x:true},
+      {t:'确认重置', c:'btn-danger', act: async ()=>{
+        const confirm=($('#rdConfirm').value||'').trim();
+        const pwd=($('#rdPwd').value||'').trim();
+        if(confirm!=='RESET'){toast('请输入 RESET','warn');return;}
+        if(!pwd){toast('请输入管理员密码','warn');return;}
+        if(!confirm('最后一次确认：立即重置为示例数据吗？此操作不可撤销！'))return;
+        toast('正在重置…');
+        const r=await POST('/api/admin/resetDemoData',{confirm,password:pwd});
+        if(r.code===0){
+          toast(r.msg||'重置完成');
+          hideModal();
+          // 刷新相关数据
+          if(typeof loadDeptsTable==='function')loadDeptsTable();
+          if(typeof loadClassesTable==='function')loadClassesTable();
+          if(typeof loadTermsTable==='function')loadTermsTable();
+          if(typeof loadAdminCoursesTable==='function')loadAdminCoursesTable();
+          if(typeof loadSettingsForm==='function')loadSettingsForm();
+          if(typeof refreshBootTerms==='function')refreshBootTerms();
+          if(typeof refreshBootClasses==='function')refreshBootClasses();
+        } else {
+          toast(r.msg||'重置失败','err');
+        }
+      }}
+    ]);
   };
 
   // -------- 月度课酬对账（管理员） --------
@@ -2190,6 +2280,7 @@
             <button class="btn btn-primary" onclick="KS.updateInstall()"><i class="bi bi-rocket-takeoff me-1"></i>一键升级</button>
             <button class="btn btn-outline-danger ms-auto" onclick="KS.maintenanceToggle()"><i class="bi bi-moon-stars me-1"></i><span id="udMaintBtn">维护模式</span></button>
           </div>
+          <div class="small text-muted mt-2" id="udSourceHint">更新源：—</div>
           <div id="udResult" class="mt-3"></div>
         </div></div>
         <div class="card mb-3"><div class="card-h"><i class="bi bi-archive text-primary"></i><span class="tt">备份与回滚</span>
@@ -2205,6 +2296,11 @@
           <div>· <code>upgrade.sql</code> 在事务中执行，失败自动回滚数据库。</div>
           <div>· 包内含 <code>downgrade.sql</code> 时，失败会尝试按备份还原并回滚。</div>
           <div>· 更新源地址请填入受你控制的 HTTPS 静态地址。</div>
+        </div></div>
+        <div class="card mt-3 border-danger"><div class="card-h bg-danger bg-opacity-10"><i class="bi bi-arrow-counterclockwise text-danger"></i><span class="tt text-danger">危险操作</span></div>
+        <div class="card-b small">
+          <div class="mb-2">一键重置为系统示例数据（保留 1 门示范课程）。<b>不可撤销</b>。</div>
+          <button class="btn btn-outline-danger" onclick="App.resetDemoData()"><i class="bi bi-arrow-counterclockwise me-1"></i>一键重置示例数据</button>
         </div></div>
       </div>
     </div>`;
@@ -2222,6 +2318,11 @@
     if($('#udBaseline') && d.app_version_baseline) $('#udBaseline').textContent=d.app_version_baseline;
     if($('#udPhpVer') && d.php_version) $('#udPhpVer').textContent=d.php_version;
     if($('#udLastCheck') && d.last_check_at) $('#udLastCheck').textContent='上次检查：'+d.last_check_at;
+    if($('#udSourceHint')){
+      const labels={github:'GitHub Releases（默认）',cnb:'CNB 官方 Release',custom:'自定义'};
+      const lbl=labels[d.update_source]||'兜底（manifest_url 直填）';
+      $('#udSourceHint').textContent='更新源：'+lbl+'　·　清单：'+ (d.manifest_url||'（未配置）');
+    }
     const rb=$('#udRollbackBtn'); if(rb) rb.disabled=!d.can_rollback;
     const tb=$('#udBackupTbody');
     if(tb){
