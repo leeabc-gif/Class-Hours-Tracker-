@@ -51,6 +51,10 @@
 
 ## 📦 最近更新
 
+**即将发布（v1.0.5）· 重置示例数据预览兼容修复**
+
+- 🛠️ **修复重置预览报错**：统一使用实际的 `ks_` 数据表名称，解决数据库表存在但预览仍访问 `lesson` 等未加前缀表名的问题。
+
 **2026-09（v1.0.4）· 全选修复与系统版本同步**
 
 - ✅ **课时列表全选修复**：表头全选、反选和批量删除统一限定在当前课时表格，修复点击全选后选择状态不完整或范围错误的问题
@@ -218,6 +222,10 @@ In Chinese vocational (中职) schools, teacher class-period (课时) and payrol
 - 📱 **Responsive UI**: Bootstrap 5 + Chart.js — works on desktop and mobile
 
 ## 🆕 Recent Updates
+
+**Coming soon (v1.0.5) — Reset-preview table-name compatibility fix**
+
+- 🛠️ **Fixed reset preview errors**: consistently use the actual `ks_` table names, resolving failures where the database table exists but the preview queried unprefixed names such as `lesson`.
 
 **2026-09 (v1.0.4) — Select-all fix and system-version synchronization**
 

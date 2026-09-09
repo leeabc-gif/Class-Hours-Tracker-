@@ -960,10 +960,13 @@ class UpdateService
         return self::validateRemoteUrl($base . (isset($fileInfo['name']) ? $fileInfo['name'] : ''), '更新包地址');
     }
 
-    protected static function httpGet($url, $maxBytes, $label)
+    protected static function httpGet($url, $maxBytes, $label, $redirects = 0)
     {
         if (!function_exists('curl_init')) {
             throw new \RuntimeException('当前 PHP 未启用 curl 扩展。');
+        }
+        if ($redirects > 3) {
+            throw new \RuntimeException('下载' . $label . '失败：重定向次数过多。');
         }
         // S-1：先用严格 SSRF 规则校验（已含 DNS A/AAAA 解析），同时返回所有合法 IP。
         $ips = self::resolveSafeIps($url);
@@ -996,13 +999,12 @@ class UpdateService
         if (self::$bearerToken !== '') {
             $headers[] = 'Authorization: Bearer ' . self::$bearerToken;
         }
+        $redirectUrl = '';
         curl_setopt_array($ch, [
             CURLOPT_URL            => $url,
             CURLOPT_RESOLVE        => [$host . ':' . $port . ':' . $primaryIp],
             CURLOPT_RETURNTRANSFER => true,
-            // 不再跟随 302：避免跳到内网/file:///gopher://
-            // 真要支持跳转，应在 CURLINFO_REDIRECT_URL 上重新跑 validateRemoteUrl + 重新解析 IP，
-            // 但当前业务仅信任受控官方 HTTPS 源，关闭跟随最稳。
+            // 不直接交给 cURL 跟随，避免跳转绕过 URL 和 DNS 安全校验；收到 3xx 后逐跳校验。
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_MAXREDIRS      => 0,
             CURLOPT_CONNECTTIMEOUT => 15,
@@ -1014,6 +1016,12 @@ class UpdateService
             // 限制协议：仅 HTTP/HTTPS，绝不允许 file:// / gopher:// / ftp://
             CURLOPT_PROTOCOLS      => CURLPROTO_HTTP | CURLPROTO_HTTPS,
             CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+            CURLOPT_HEADERFUNCTION => function ($curl, $header) use (&$redirectUrl) {
+                if (preg_match('/^Location:\s*(.+?)\s*$/i', $header, $m)) {
+                    $redirectUrl = trim($m[1]);
+                }
+                return strlen($header);
+            },
         ]);
         // 通过写临时文件限制体积
         $tmp = tempnam(sys_get_temp_dir(), 'ksdl');
@@ -1027,6 +1035,16 @@ class UpdateService
         if ($err !== '') {
             @unlink($tmp);
             throw new \RuntimeException('下载' . $label . '失败：' . $err);
+        }
+        if (in_array($code, [301, 302, 303, 307, 308], true)) {
+            @unlink($tmp);
+            if ($redirectUrl === '') {
+                throw new \RuntimeException('下载' . $label . '失败：HTTP ' . $code . ' 且未提供跳转地址。');
+            }
+            // Location 允许相对地址；以当前 URL 为基准拼接后，再执行完整 URL/域名/IP 校验。
+            $redirectUrl = self::resolveRedirectUrl($url, $redirectUrl);
+            $redirectUrl = self::validateRemoteUrl($redirectUrl, $label . '跳转地址');
+            return self::httpGet($redirectUrl, $maxBytes, $label, $redirects + 1);
         }
         if ($code === 401) {
             @unlink($tmp);
@@ -1056,6 +1074,22 @@ class UpdateService
         $data = file_get_contents($tmp);
         @unlink($tmp);
         return $data;
+    }
+
+    protected static function resolveRedirectUrl($baseUrl, $location)
+    {
+        $location = trim((string) $location);
+        if ($location === '') return '';
+        if (preg_match('#^https?://#i', $location)) return $location;
+        $base = parse_url($baseUrl);
+        if (!is_array($base) || empty($base['scheme']) || empty($base['host'])) return $location;
+        if (strpos($location, '//') === 0) return $base['scheme'] . ':' . $location;
+        $origin = $base['scheme'] . '://' . $base['host'];
+        if (isset($base['port'])) $origin .= ':' . (int) $base['port'];
+        if (strpos($location, '/') === 0) return $origin . $location;
+        $path = isset($base['path']) ? $base['path'] : '/';
+        $dir = preg_replace('#/[^/]*$#', '/', $path);
+        return $origin . ($dir ?: '/') . $location;
     }
 
     /**

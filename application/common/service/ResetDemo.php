@@ -73,17 +73,17 @@ class ResetDemo
     public static function snapshot()
     {
         $tables = [
-            'ks_lesson'              => (int) Db::name('lesson')->count(),
-            'ks_class'               => (int) Db::name('class')->count(),
-            'ks_course'              => (int) Db::name('course')->count(),
-            'ks_course_favorite'     => (int) Db::name('course_favorite')->count(),
-            'ks_ai_conversation'     => (int) Db::name('ai_conversation')->count(),
-            'ks_ai_message'          => (int) Db::name('ai_message')->count(),
-            'ks_teacher_ai_config'   => (int) Db::name('teacher_ai_config')->count(),
-            'ks_operation_log'       => (int) Db::name('operation_log')->count(),
+            'ks_lesson'              => (int) Db::table('ks_lesson')->count(),
+            'ks_class'               => (int) Db::table('ks_class')->count(),
+            'ks_course'              => (int) Db::table('ks_course')->count(),
+            'ks_course_favorite'     => (int) Db::table('ks_course_favorite')->count(),
+            'ks_ai_conversation'     => (int) Db::table('ks_ai_conversation')->count(),
+            'ks_ai_message'          => (int) Db::table('ks_ai_message')->count(),
+            'ks_teacher_ai_config'   => (int) Db::table('ks_teacher_ai_config')->count(),
+            'ks_operation_log'       => (int) Db::table('ks_operation_log')->count(),
         ];
-        $adminCount = (int) Db::name('teacher')->where('role', 'admin')->where('status', 1)->count();
-        $demoCourse = Db::name('course')->where('is_demo', 1)->find();
+        $adminCount = (int) Db::table('ks_teacher')->where('role', 'admin')->where('status', 1)->count();
+        $demoCourse = Db::table('ks_course')->where('is_demo', 1)->find();
         return [
             'tables'         => $tables,
             'rows_total'     => array_sum($tables),
@@ -100,20 +100,20 @@ class ResetDemo
     public static function run($admin)
     {
         // 1) 防御：必须保留至少 1 个 admin
-        $adminCount = (int) Db::name('teacher')->where('role', 'admin')->where('status', 1)->count();
+        $adminCount = (int) Db::table('ks_teacher')->where('role', 'admin')->where('status', 1)->count();
         if ($adminCount < 1) {
             // 兜底：自动补回一个 admin（id=1, username=admin, password=admin123）
-            $exists = Db::name('teacher')->where('id', 1)->find();
+            $exists = Db::table('ks_teacher')->where('id', 1)->find();
             $now = time();
             if ($exists) {
-                Db::name('teacher')->where('id', 1)->update([
+                Db::table('ks_teacher')->where('id', 1)->update([
                     'role'      => 'admin',
                     'status'    => 1,
                     'password'  => self::ADMIN_DEFAULT_HASH,
                     'updated_at'=> $now,
                 ]);
             } else {
-                Db::name('teacher')->insert([
+                Db::table('ks_teacher')->insert([
                     'id' => 1,
                     'username' => 'admin',
                     'password' => self::ADMIN_DEFAULT_HASH,
@@ -128,7 +128,7 @@ class ResetDemo
             }
             $adminCount = 1;
         }
-        $adminId = (int) Db::name('teacher')->where('role', 'admin')->where('status', 1)->order('id asc')->value('id');
+        $adminId = (int) Db::table('ks_teacher')->where('role', 'admin')->where('status', 1)->order('id asc')->value('id');
 
         // 2) 走事务
         Db::startTrans();
@@ -157,8 +157,8 @@ class ResetDemo
                 'operation_log'      => 'ks_operation_log', // 保留刚才的 reset_demo
             ];
             foreach ($tables as $model => $t) {
-                $n = (int) Db::name($model)->count();
-                Db::name($model)->delete(true);
+                $n = (int) Db::table($t)->count();
+                Db::table($t)->delete(true);
                 $cleared[$t] = $n;
                 $clearedRows += $n;
             }
@@ -174,7 +174,7 @@ class ResetDemo
             $payload = self::DEMO_COURSE;
             $payload['created_at'] = time();
             $payload['updated_at'] = time();
-            $courseId = (int) Db::name('course')->insertGetId($payload);
+            $courseId = (int) Db::table('ks_course')->insertGetId($payload);
 
             // 4) 补齐出厂 ks_setting（不覆盖 update_manifest_url）
             $now = time();
