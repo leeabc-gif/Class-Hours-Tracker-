@@ -227,13 +227,27 @@ class UpdateService
         if (!is_string($html) || $html === '') return '';
         // value 保留 Release 的真实 tag；排序时单独使用去掉 v 前缀后的版本号。
         $candidates = [];
-        if (preg_match_all('#\bv(\d+\.\d+\.\d+(?:-[A-Za-z0-9._-]+)?)\b#', $html, $m1)) {
-            foreach ($m1[1] as $v) $candidates['v' . $v] = $v;
+
+        // 首选：只从真实的 Release 链接里取 tag。
+        // 页面里存在大量形如版本号的无关文本（实测把 User-Agent 里的
+        // "curl/8.21.0" 当成了 tag，导致解析出 8.21.0 而拼出 404 的清单地址），
+        // 因此不能再对整个 HTML 做宽泛匹配。
+        if (preg_match_all('#-/releases/(?:tag|download)/(v?\d+\.\d+\.\d+(?:-[A-Za-z0-9._-]+)?)#i', $html, $m0)) {
+            foreach ($m0[1] as $tag) {
+                $candidates[$tag] = ltrim($tag, 'vV');
+            }
         }
-        // 退路：抓裸 X.Y.Z（且排除已经带 v 前缀的匹配）
-        if (preg_match_all('#(?<![A-Za-z0-9.vV])(\d+\.\d+\.\d+(?:-[A-Za-z0-9._-]+)?)\b#', $html, $m2)) {
-            foreach ($m2[1] as $v) $candidates[$v] = $v;
+
+        // 退路：仅当上面一条都没命中时，才退回宽泛匹配（兼容页面结构变化）
+        if (empty($candidates)) {
+            if (preg_match_all('#\bv(\d+\.\d+\.\d+(?:-[A-Za-z0-9._-]+)?)\b#', $html, $m1)) {
+                foreach ($m1[1] as $v) $candidates['v' . $v] = $v;
+            }
+            if (preg_match_all('#(?<![A-Za-z0-9.vV])(\d+\.\d+\.\d+(?:-[A-Za-z0-9._-]+)?)\b#', $html, $m2)) {
+                foreach ($m2[1] as $v) $candidates[$v] = $v;
+            }
         }
+
         if (empty($candidates)) return '';
         uksort($candidates, function ($tagA, $tagB) use ($candidates) {
             return version_compare($candidates[$tagA], $candidates[$tagB]);
