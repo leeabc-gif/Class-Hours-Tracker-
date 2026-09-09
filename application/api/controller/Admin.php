@@ -1280,8 +1280,15 @@ class Admin extends Base
      */
     public function resetDemoDataPreview()
     {
-        $tables = \app\common\service\ResetDemo::snapshot();
-        return $this->ok($tables);
+        try {
+            $tables = \app\common\service\ResetDemo::snapshot();
+            return $this->ok($tables);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[reset_demo_preview] failed: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return $this->fail('无法获取重置预览：' . $e->getMessage());
+        }
     }
 
     /**

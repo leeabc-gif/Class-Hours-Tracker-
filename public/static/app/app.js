@@ -2293,7 +2293,13 @@
    */
   App.resetDemoData=async function(){
     // 先做一次预演
-    const pre=await GET('/api/admin/resetDemoDataPreview');
+    let pre;
+    try {
+      pre=await GET('/api/admin/resetDemoDataPreview');
+    } catch (e) {
+      toast('无法获取重置预览：' + (e && e.message ? e.message : '接口请求失败'),'err');
+      return;
+    }
     if(pre.code!==0){toast(pre.msg||'无法获取重置预览','err');return;}
     const p=pre.data||{};
     if(!p.admin_count){toast('当前没有可用的管理员账号，重置已拒绝','err');return;}
@@ -2312,11 +2318,11 @@
     openModal('一键重置示例数据（不可恢复）', html, [
       {t:'取消', c:'btn-light', x:true},
       {t:'确认重置', c:'btn-danger', act: async ()=>{
-        const confirm=($('#rdConfirm').value||'').trim();
+        const confirmText=($('#rdConfirm').value||'').trim();
         const pwd=($('#rdPwd').value||'').trim();
-        if(confirm!=='RESET'){toast('请输入 RESET','warn');return;}
+        if(confirmText!=='RESET'){toast('请输入 RESET','warn');return;}
         if(!pwd){toast('请输入管理员密码','warn');return;}
-        if(!confirm('最后一次确认：立即重置为示例数据吗？此操作不可撤销！'))return;
+        if(!window.confirm('最后一次确认：立即重置为示例数据吗？此操作不可撤销！'))return;
         toast('正在重置…');
         const r=await POST('/api/admin/resetDemoData',{confirm,password:pwd});
         if(r.code===0){
