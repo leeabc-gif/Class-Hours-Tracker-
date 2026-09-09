@@ -197,7 +197,7 @@ class UpdateService
     {
         $manifestUrl = trim((string) $manifestUrl);
         // 只处理 latest 入口；带具体 tag 的 download URL 必须原样透传
-        if (!preg_match('#^https://cnb\.cool/([^/?#]+)/([^/?#]+)/-/releases/latest(?:/download/manifest\.json)?/?$#i', $manifestUrl, $m)) {
+        if (!preg_match('~^https://cnb\.cool/([^/?#]+)/([^/?#]+)/-/releases/latest(?:/download/manifest\.json)?/?$~i', $manifestUrl, $m)) {
             return [$manifestUrl, '', 'cnb'];
         }
         $owner = $m[1];
