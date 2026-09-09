@@ -514,6 +514,7 @@
         { p: 'dashboard', i: 'speedometer2', t: '全校看板' },
         { p: 'admin-users', i: 'people', t: '用户管理' },
         { p: 'admin-meta', i: 'gear', t: '基础配置' },
+        { p: 'admin-aihub', i: 'robot', t: 'AI 中转' },
         { p: 'admin-update', i: 'arrow-repeat', t: '系统更新' },
         { p: 'admin-reconcile', i: 'cash-stack', t: '月度对账' },
         { p: 'logs', i: 'journal-text', t: '操作日志' },
@@ -522,6 +523,7 @@
         { p: 'my-calendar', i: 'calendar3', t: '我的日历' },
         { p: 'my-stats', i: 'bar-chart', t: '我的统计' },
         { p: 'ai', i: 'robot', t: 'AI 助手' },
+        { p: 'ai-tokens', i: 'key', t: 'API 令牌' },
         { p: 'settings', i: 'person-gear', t: '个人设置' },
       ];
     }
@@ -533,6 +535,7 @@
       { p: 'my-calendar', i: 'calendar3', t: '课表日历' },
       { p: 'my-stats', i: 'bar-chart', t: '我的统计' },
       { p: 'ai', i: 'robot', t: 'AI 智能分析' },
+      { p: 'ai-tokens', i: 'key', t: 'API 令牌' },
       { p: 'settings', i: 'person-gear', t: '个人设置' },
     ];
   }
@@ -564,6 +567,7 @@
     'admin-dashboard': { t: '全校数据看板', a: '管理员' },
     'admin-users': { t: '用户管理', a: '管理员' },
     'admin-meta': { t: '基础配置', a: '管理员' },
+    'admin-aihub': { t: 'AI 中转管理', a: '渠道 · 模型倍率 · 额度分配' },
     'admin-update': { t: '系统更新', a: '在线升级 · 备份 · 回滚' },
     'admin-reconcile': { t: '月度课酬对账', a: '教师 × 月份 交叉对账' },
     'logs': { t: '操作日志', a: '管理员' },
@@ -572,6 +576,7 @@
     'my-calendar': { t: '课表日历', a: '周视图' },
     'my-stats': { t: '我的统计', a: '数据分析' },
     'ai': { t: 'AI 智能分析', a: '对话 · 解析 · 评估' },
+    'ai-tokens': { t: '我的 API 令牌', a: '额度 · sk- 密钥 · 外部调用' },
     'settings': { t: '个人设置', a: '资料与密码' },
   };
 
@@ -1843,6 +1848,171 @@
   // =====================================================================
   // 14. AI 助手
   // =====================================================================
+  // -------- 我的 API 令牌（额度 / sk- 密钥 / 外部调用）--------
+  // 时间戳 → 'YYYY-MM-DD HH:mm'（本项目其它地方没有同名工具，这里自带一份）
+  function fmtTs(ts) {
+    const t = Number(ts) || 0;
+    if (!t) return '—';
+    const d = new Date(t * 1000);
+    const p = function (n) { return n < 10 ? '0' + n : '' + n; };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+      + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  let aiTokState = { tokens: [], quota: null, usage: null, gateway: null };
+
+  ROUTERS['ai-tokens'] = function (host) {
+    host.innerHTML = '<div class="card mb-3"><div class="card-h"><i class="bi bi-battery-charging text-success"></i>'
+      + '<span class="tt">AI 额度</span></div><div class="card-b" id="aiQuotaBox">'
+      + '<div class="text-center text-muted small py-3">加载中…</div></div></div>'
+      + '<div class="card mb-3"><div class="card-h"><i class="bi bi-diagram-3 text-primary"></i>'
+      + '<span class="tt">接入地址（OpenAI 兼容）</span></div><div class="card-b" id="aiGwBox"></div></div>'
+      + '<div class="card"><div class="card-h"><i class="bi bi-key text-warning"></i><span class="tt">我的令牌</span>'
+      + '<div class="flex-grow-1"></div>'
+      + '<button class="btn btn-sm btn-primary" onclick="KS.aiTokenForm()"><i class="bi bi-plus-lg"></i> 新建令牌</button></div>'
+      + '<div class="table-responsive"><table class="table table-sm align-middle"><thead><tr>'
+      + '<th>名称</th><th>密钥</th><th>可用模型</th><th>状态</th><th>有效期</th><th>最近使用</th><th style="width:150px">操作</th>'
+      + '</tr></thead><tbody id="aiTokenTbody"></tbody></table></div></div>';
+    loadAiTokens();
+  };
+
+  async function loadAiTokens() {
+    const res = await GET('/api/aitoken/mine');
+    if (res.code !== 0) { const b = $('#aiQuotaBox'); if (b) b.innerHTML = '<div class="text-danger small">' + esc(res.msg) + '</div>'; return; }
+    const d = res.data || {};
+    aiTokState.tokens = d.tokens || [];
+    aiTokState.quota  = d.quota  || null;
+    aiTokState.usage  = d.usage  || null;
+    aiTokState.gateway = d.gateway || null;
+    renderAiTokens();
+  }
+
+  function renderAiTokens() {
+    // 额度卡片
+    const q = aiTokState.quota, u = aiTokState.usage;
+    const box = $('#aiQuotaBox');
+    if (box) {
+      if (!q) { box.innerHTML = '<div class="text-muted small">暂无额度信息</div>'; }
+      else {
+        const cell = function (label, used, limit, left) {
+          const unlimited = !(limit > 0);
+          return '<div class="col-6 col-md-3"><div class="small text-muted">' + label + '</div>'
+            + '<div><b>' + esc(String(used)) + '</b>'
+            + (unlimited ? ' <span class="text-muted small">/ 不限</span>'
+                         : ' <span class="text-muted small">/ ' + esc(String(limit)) + '</span>')
+            + '</div>' + (unlimited ? '' : '<div class="small text-muted">剩余 ' + esc(String(left)) + '</div>') + '</div>';
+        };
+        box.innerHTML = '<div class="row g-3">'
+          + '<div class="col-6 col-md-3"><div class="small text-muted">总余额</div><div><b class="fs-5">' + esc(String(q.balance)) + '</b> <span class="text-muted small">点</span></div>'
+          + '<div class="small text-muted">累计消耗 ' + esc(String(q.total_used)) + '</div></div>'
+          + cell('今日', q.daily_used, q.daily_limit, q.remaining_daily)
+          + cell('本周', q.weekly_used, q.weekly_limit, q.remaining_weekly)
+          + cell('本月', q.monthly_used, q.monthly_limit, q.remaining_monthly)
+          + '</div>'
+          + (u ? '<div class="small text-muted mt-2">累计调用 ' + u.count + ' 次（成功 ' + u.success + ' / 失败 ' + u.failed
+              + '），消耗 ' + u.points + ' 点，平均耗时 ' + u.avg_latency_ms + ' ms</div>' : '');
+      }
+    }
+
+    // 接入地址
+    const gw = aiTokState.gateway, gb = $('#aiGwBox');
+    if (gb) {
+      if (!gw) { gb.innerHTML = '<div class="text-muted small">—</div>'; }
+      else {
+        const line = function (label, url) {
+          return '<div class="d-flex align-items-center gap-2 mb-2"><span class="text-muted small" style="width:76px">' + label + '</span>'
+            + '<code class="small flex-grow-1" style="word-break:break-all">' + esc(url) + '</code>'
+            + '<button class="btn btn-sm btn-outline-secondary" onclick="KS.copyText(\'' + jsStr(url) + '\')">复制</button></div>';
+        };
+        gb.innerHTML = line('Base URL', gw.base_url) + line('对话接口', gw.chat) + line('模型列表', gw.models)
+          + '<div class="small text-muted mt-2">在第三方客户端里：接口类型选 OpenAI，Base URL 填上面的地址，API Key 填下面创建的 <code>sk-</code> 密钥即可。</div>';
+      }
+    }
+
+    // 令牌列表
+    const tb = $('#aiTokenTbody');
+    if (!tb) return;
+    if (!aiTokState.tokens.length) {
+      tb.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">还没有令牌。点击右上角「新建令牌」创建，'
+        + '明文密钥只在创建时显示一次。</td></tr>';
+      return;
+    }
+    tb.innerHTML = aiTokState.tokens.map(function (t) {
+      const expired = t.expires_at > 0 && t.expires_at <= Math.floor(Date.now() / 1000);
+      const st = expired ? '<span class="badge bg-danger">已过期</span>'
+        : (t.status ? '<span class="badge bg-success">启用</span>' : '<span class="badge bg-secondary">停用</span>');
+      return '<tr>'
+        + '<td>' + esc(t.name) + '</td>'
+        + '<td><code class="small">' + esc(t.token_prefix) + '••••••••</code></td>'
+        + '<td class="small">' + ((t.model_limit && t.model_limit.length) ? esc(t.model_limit.join(', ')) : '<span class="text-muted">不限</span>') + '</td>'
+        + '<td>' + st + '</td>'
+        + '<td class="small">' + (t.expires_at ? esc(fmtTs(t.expires_at)) : '<span class="text-muted">永久</span>') + '</td>'
+        + '<td class="small text-muted">' + (t.last_used_at ? esc(fmtTs(t.last_used_at)) : '未使用') + '</td>'
+        + '<td style="white-space:nowrap"><button class="btn btn-sm btn-outline-secondary" onclick="KS.aiTokenToggle(' + t.id + ',' + (t.status ? 0 : 1) + ')">'
+        + (t.status ? '停用' : '启用') + '</button> '
+        + '<button class="btn btn-sm btn-outline-danger" onclick="KS.aiTokenDel(' + t.id + ')">删</button></td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  App.aiTokenForm = function () {
+    openModal('新建 API 令牌', ''
+      + '<div class="mb-2"><label class="form-label">令牌名称</label>'
+      + '<input id="atkName" class="form-control" placeholder="如 Cherry Studio、实习实训脚本"></div>'
+      + '<div class="mb-2"><label class="form-label">可用模型（逗号分隔，留空=不限）</label>'
+      + '<input id="atkModels" class="form-control" placeholder="gpt-4o-mini,deepseek-chat"></div>'
+      + '<div class="mb-2"><label class="form-label">有效期（留空=永久）</label>'
+      + '<input id="atkExp" type="date" class="form-control"></div>'
+      + '<div class="small text-muted">创建后明文密钥只显示一次，请立即复制保存。</div>',
+      [{ t: '创建', c: 'btn-primary', act: createAiToken }]);
+  };
+
+  async function createAiToken() {
+    const name = ($('#atkName').value || '').trim();
+    if (!name) { toast('请填写令牌名称', 'warn'); return; }
+    const models = ($('#atkModels').value || '').split(/[,，\s]+/).filter(Boolean);
+    let exp = 0;
+    const dv = $('#atkExp').value;
+    if (dv) { const ts = Math.floor(new Date(dv + ' 23:59:59').getTime() / 1000); if (ts > 0) exp = ts; }
+
+    const res = await POST('/api/aitoken/create', { name: name, model_limit: models, expires_at: exp });
+    if (res.code !== 0) { toast(res.msg, 'err'); return; }
+
+    // 明文只出现这一次：单独弹窗展示，避免关掉后找不到
+    const plain = res.data.plain;
+    openModal('令牌已创建 · 请立即复制', ''
+      + '<div class="alert alert-warning small">这是唯一一次显示完整密钥，关闭后无法再次查看。</div>'
+      + '<div class="input-group"><input id="atkPlain" class="form-control font-monospace" value="' + esc(plain) + '" readonly>'
+      + '<button class="btn btn-outline-secondary" onclick="KS.copyText(\'' + jsStr(plain) + '\')">复制</button></div>',
+      [{ t: '我已保存', c: 'btn-primary', act: function () { hideModal(); loadAiTokens(); } }]);
+  }
+
+  App.aiTokenToggle = async function (id, status) {
+    const res = await POST('/api/aitoken/toggle', { id: id, status: status });
+    if (res.code !== 0) { toast(res.msg, 'err'); return; }
+    toast(res.msg); loadAiTokens();
+  };
+
+  App.aiTokenDel = async function (id) {
+    if (!confirm('删除该令牌？使用该令牌的外部程序将立即失效。')) return;
+    const res = await POST('/api/aitoken/delete', { id: id });
+    if (res.code !== 0) { toast(res.msg, 'err'); return; }
+    toast('已删除'); loadAiTokens();
+  };
+
+  App.copyText = function (txt) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = txt; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
+      }
+      toast('已复制');
+    } catch (e) { toast('复制失败，请手动选择复制', 'warn'); }
+  };
+
   ROUTERS['ai'] = function (host) {
     host.innerHTML = `<div class="ai-wrap">
       <div class="ai-side"><div class="hd"><span><i class="bi bi-chat-dots me-1"></i>会话</span>
@@ -2060,6 +2230,223 @@
     res.code===0?toast('已删除'):toast(res.msg,'err');
     loadAdminUsers();
   };
+
+  // -------- AI 中转（渠道 / 模型倍率 / 额度分配）--------
+  const AIHUB_TYPES = ['openai','claude','qwen','deepseek','gemini','custom'];
+  let aihubState = { tab: 'channel', channels: [], models: [], quotas: [] };
+
+  ROUTERS['admin-aihub']=function(host){
+    host.innerHTML=`<div class="card"><div class="card-h"><i class="bi bi-robot text-primary"></i><span class="tt">AI 中转管理</span>
+      <div class="flex-grow-1"></div>
+      <div class="btn-group btn-group-sm" role="group">
+        <button type="button" class="btn btn-outline-primary" id="aihubTabChannel" onclick="KS.aihubTab('channel')">渠道</button>
+        <button type="button" class="btn btn-outline-primary" id="aihubTabModel" onclick="KS.aihubTab('model')">模型倍率</button>
+        <button type="button" class="btn btn-outline-primary" id="aihubTabQuota" onclick="KS.aihubTab('quota')">额度分配</button>
+      </div></div>
+      <div class="card-b" id="aihubBody"><div class="text-center text-muted small py-4">加载中…</div></div></div>`;
+    loadAihub();
+  };
+
+  async function loadAihub(){
+    const [ch, qu] = await Promise.all([GET('/api/aichannel/index'), GET('/api/aiquota/all')]);
+    if (ch.code===0){ aihubState.channels=(ch.data&&ch.data.channels)||[]; aihubState.models=(ch.data&&ch.data.models)||[]; }
+    if (qu.code===0){ aihubState.quotas=(qu.data&&qu.data.list)||[]; }
+    renderAihub();
+  }
+
+  App.aihubTab=function(t){ aihubState.tab=t; renderAihub(); };
+
+  function renderAihub(){
+    const body=$('#aihubBody'); if(!body) return;
+    [['channel','Channel'],['model','Model'],['quota','Quota']].forEach(function(p){
+      const b=$('#aihubTab'+p[1]);
+      if(b) b.className='btn btn-sm '+(aihubState.tab===p[0]?'btn-primary':'btn-outline-primary');
+    });
+    if(aihubState.tab==='model') return renderAihubModel(body);
+    if(aihubState.tab==='quota') return renderAihubQuota(body);
+    return renderAihubChannel(body);
+  }
+
+  // ---------- 渠道 ----------
+  function renderAihubChannel(body){
+    const rows=aihubState.channels.map(function(c){
+      const md=(c.models||[]);
+      const mtxt = md.length ? esc(md.slice(0,3).join(', ')) + (md.length>3 ? ' 等'+md.length+'个' : '') : '<span class="text-muted">不限</span>';
+      return `<tr>
+        <td>${esc(c.name)}</td>
+        <td><span class="badge bg-light text-dark">${esc(c.type)}</span></td>
+        <td class="small text-muted" style="max-width:240px;word-break:break-all">${esc(c.base_url)}</td>
+        <td>${c.key_configured?'<span class="text-success">已配置</span>':'<span class="text-danger">未配置</span>'}</td>
+        <td class="small">${mtxt}</td>
+        <td>${c.priority}</td>
+        <td>${c.status?'<span class="badge bg-success">启用</span>':'<span class="badge bg-secondary">停用</span>'}</td>
+        <td style="width:210px;white-space:nowrap">
+          <button class="btn btn-sm btn-outline-primary" onclick="KS.aiChannelForm(${c.id})">编辑</button>
+          <button class="btn btn-sm btn-outline-secondary" onclick="KS.aiChannelTest(${c.id})">测试</button>
+          <button class="btn btn-sm btn-outline-danger" onclick="KS.aiChannelDel(${c.id})">删</button>
+        </td></tr>`;
+    }).join('');
+    body.innerHTML=`<div class="d-flex justify-content-between align-items-center mb-2">
+      <div class="small text-muted">共 ${aihubState.channels.length} 个渠道；按权重从高到低依次尝试，失败自动切换下一个。</div>
+      <button class="btn btn-sm btn-primary" onclick="KS.aiChannelForm(0)"><i class="bi bi-plus-lg"></i> 新增渠道</button></div>
+      <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr>
+      <th>名称</th><th>类型</th><th>接口地址</th><th>Key</th><th>模型白名单</th><th>权重</th><th>状态</th><th>操作</th>
+      </tr></thead><tbody>${rows||'<tr><td colspan="8" class="text-center text-muted py-4">暂无渠道。未配置渠道时，站内 AI 会回退到「基础配置 → 系统模型」。</td></tr>'}</tbody></table></div>`;
+  }
+
+  App.aiChannelForm=function(id){
+    const c = id ? aihubState.channels.find(function(x){return x.id===id;}) : null;
+    openModal(id?'编辑渠道':'新增渠道', `
+      <input type="hidden" id="achId" value="${id||0}">
+      <div class="mb-2"><label class="form-label">渠道名称</label><input id="achName" class="form-control" value="${c?esc(c.name):''}" placeholder="如 OpenAI-主用"></div>
+      <div class="row g-2 mb-2">
+        <div class="col-6"><label class="form-label">厂商类型</label><select id="achType" class="form-select">
+          ${AIHUB_TYPES.map(function(t){return '<option value="'+t+'"'+(c&&c.type===t?' selected':'')+'>'+t+'</option>';}).join('')}
+        </select></div>
+        <div class="col-6"><label class="form-label">权重（越大越优先）</label><input id="achPriority" type="number" class="form-control" value="${c?c.priority:10}"></div>
+      </div>
+      <div class="mb-2"><label class="form-label">接口地址 Base URL</label><input id="achUrl" class="form-control" value="${c?esc(c.base_url):''}" placeholder="https://api.openai.com/v1"></div>
+      <div class="mb-2"><label class="form-label">API Key</label><input id="achKey" type="password" class="form-control" autocomplete="new-password" placeholder="${c&&c.key_configured?'留空表示保留原 Key':'如 sk-xxxxxx'}"></div>
+      <div class="mb-2"><label class="form-label">模型白名单（逗号分隔，留空=不限制）</label><input id="achModels" class="form-control" value="${c?esc((c.models||[]).join(',')):''}" placeholder="gpt-4o-mini,gpt-4o"></div>
+      <div class="form-check"><input class="form-check-input" type="checkbox" id="achStatus" ${(!c||c.status)?'checked':''}><label class="form-check-label">启用该渠道</label></div>
+    `, [{t:'保存',c:'btn-primary',act:saveAiChannel}]);
+  };
+
+  async function saveAiChannel(){
+    const models=($('#achModels').value||'').split(/[,，\s]+/).filter(Boolean);
+    const res=await POST('/api/aichannel/save',{
+      id: parseInt($('#achId').value,10)||0,
+      name: $('#achName').value.trim(),
+      type: $('#achType').value,
+      base_url: $('#achUrl').value.trim(),
+      api_key: $('#achKey').value.trim(),
+      models: models,
+      priority: parseInt($('#achPriority').value,10)||10,
+      status: $('#achStatus').checked?1:0
+    });
+    if(res.code!==0){ toast(res.msg,'err'); return; }
+    hideModal(); toast('已保存'); loadAihub();
+  }
+
+  App.aiChannelTest=async function(id){
+    const c=aihubState.channels.find(function(x){return x.id===id;}); if(!c) return;
+    toast('正在测试连通性…');
+    const res=await POST('/api/aichannel/test',{ id:id, base_url:c.base_url, with_sync:1 });
+    if(res.code!==0){ toast(res.msg,'err'); return; }
+    toast(res.msg + (res.data && res.data.added ? '，新登记 '+res.data.added+' 个模型' : ''));
+    loadAihub();
+  };
+
+  App.aiChannelDel=async function(id){
+    const c=aihubState.channels.find(function(x){return x.id===id;}); if(!c) return;
+    if(!confirm('删除渠道「'+c.name+'」？')) return;
+    const res=await POST('/api/aichannel/delete',{ id:id });
+    if(res.code!==0){ toast(res.msg,'err'); return; }
+    toast('已删除'); loadAihub();
+  };
+
+  // ---------- 模型倍率 ----------
+  function renderAihubModel(body){
+    const rows=aihubState.models.map(function(m){
+      return `<tr>
+        <td class="small">${esc(m.model_key)}</td>
+        <td>${esc(m.display_name||'')}</td>
+        <td>${m.prompt_ratio}</td>
+        <td>${m.completion_ratio}</td>
+        <td>${m.enabled?'<span class="badge bg-success">启用</span>':'<span class="badge bg-secondary">停用</span>'}</td>
+        <td style="width:150px;white-space:nowrap">
+          <button class="btn btn-sm btn-outline-primary" onclick="KS.aiModelForm(${m.id})">编辑</button>
+          <button class="btn btn-sm btn-outline-danger" onclick="KS.aiModelDel(${m.id})">删</button>
+        </td></tr>`;
+    }).join('');
+    body.innerHTML=`<div class="d-flex justify-content-between align-items-center mb-2">
+      <div class="small text-muted">点数 = 输入 token × 输入倍率 + 输出 token × 输出倍率；未登记的模型按 1:1 计费。</div>
+      <button class="btn btn-sm btn-primary" onclick="KS.aiModelForm(0)"><i class="bi bi-plus-lg"></i> 新增模型</button></div>
+      <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr>
+      <th>模型标识</th><th>显示名</th><th>输入倍率</th><th>输出倍率</th><th>状态</th><th>操作</th>
+      </tr></thead><tbody>${rows||'<tr><td colspan="6" class="text-center text-muted py-4">暂无模型。可在「渠道 → 测试」里一键拉取并登记。</td></tr>'}</tbody></table></div>`;
+  }
+
+  App.aiModelForm=function(id){
+    const m = id ? aihubState.models.find(function(x){return x.id===id;}) : null;
+    openModal(id?'编辑模型倍率':'新增模型', `
+      <input type="hidden" id="amdId" value="${id||0}">
+      <div class="mb-2"><label class="form-label">模型标识（与上游模型名一致）</label><input id="amdKey" class="form-control" value="${m?esc(m.model_key):''}" placeholder="gpt-4o-mini"></div>
+      <div class="mb-2"><label class="form-label">显示名</label><input id="amdName" class="form-control" value="${m?esc(m.display_name||''):''}" placeholder="可留空"></div>
+      <div class="row g-2 mb-2">
+        <div class="col-6"><label class="form-label">输入倍率</label><input id="amdP" type="number" step="0.0001" class="form-control" value="${m?m.prompt_ratio:1}"></div>
+        <div class="col-6"><label class="form-label">输出倍率</label><input id="amdC" type="number" step="0.0001" class="form-control" value="${m?m.completion_ratio:1}"></div>
+      </div>
+      <div class="form-check"><input class="form-check-input" type="checkbox" id="amdEnabled" ${(!m||m.enabled)?'checked':''}><label class="form-check-label">启用</label></div>
+    `, [{t:'保存',c:'btn-primary',act:saveAiModel}]);
+  };
+
+  async function saveAiModel(){
+    const res=await POST('/api/aichannel/modelSave',{
+      id: parseInt($('#amdId').value,10)||0,
+      model_key: $('#amdKey').value.trim(),
+      display_name: $('#amdName').value.trim(),
+      prompt_ratio: parseFloat($('#amdP').value)||1,
+      completion_ratio: parseFloat($('#amdC').value)||1,
+      enabled: $('#amdEnabled').checked?1:0
+    });
+    if(res.code!==0){ toast(res.msg,'err'); return; }
+    hideModal(); toast('已保存'); loadAihub();
+  }
+
+  App.aiModelDel=async function(id){
+    if(!confirm('删除该模型倍率配置？')) return;
+    const res=await POST('/api/aichannel/modelDelete',{ id:id });
+    if(res.code!==0){ toast(res.msg,'err'); return; }
+    toast('已删除'); loadAihub();
+  };
+
+  // ---------- 额度分配 ----------
+  function renderAihubQuota(body){
+    const rows=aihubState.quotas.map(function(q){
+      const lim=function(v){ return v>0 ? esc(String(v)) : '<span class="text-muted">不限</span>'; };
+      return `<tr>
+        <td>${esc(q.name)}<div class="small text-muted">${esc(q.username)}${q.department?' · '+esc(q.department):''}</div></td>
+        <td><b>${q.quota.balance}</b></td>
+        <td class="small text-muted">${q.quota.total_used}</td>
+        <td class="small">${lim(q.quota.daily_limit)}</td>
+        <td class="small">${lim(q.quota.weekly_limit)}</td>
+        <td class="small">${lim(q.quota.monthly_limit)}</td>
+        <td style="width:110px"><button class="btn btn-sm btn-primary" onclick="KS.aiQuotaForm(${q.teacher_id})">分配</button></td>
+      </tr>`;
+    }).join('');
+    body.innerHTML=`<div class="small text-muted mb-2">额度单位＝点数。周期上限填 0 表示不限。教师未分配额度时，站内 AI 助手不受限；AI 操练场与外部 API 一律严格校验。</div>
+      <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr>
+      <th>教师</th><th>余额</th><th>累计消耗</th><th>日上限</th><th>周上限</th><th>月上限</th><th>操作</th>
+      </tr></thead><tbody>${rows||'<tr><td colspan="7" class="text-center text-muted py-4">暂无教师</td></tr>'}</tbody></table></div>`;
+  }
+
+  App.aiQuotaForm=function(tid){
+    const q=aihubState.quotas.find(function(x){return x.teacher_id===tid;}); if(!q) return;
+    openModal('分配 AI 额度 · '+q.name, `
+      <div class="mb-2 small text-muted">当前余额 <b>${q.quota.balance}</b>，累计消耗 ${q.quota.total_used}</div>
+      <div class="mb-3"><label class="form-label">充值 / 回收（正数充值，负数回收，0=只改上限）</label>
+        <input id="aqAmount" type="number" step="0.01" class="form-control" value="0"></div>
+      <div class="row g-2">
+        <div class="col-4"><label class="form-label">日上限</label><input id="aqDaily" type="number" step="0.01" class="form-control" value="${q.quota.daily_limit}"></div>
+        <div class="col-4"><label class="form-label">周上限</label><input id="aqWeekly" type="number" step="0.01" class="form-control" value="${q.quota.weekly_limit}"></div>
+        <div class="col-4"><label class="form-label">月上限</label><input id="aqMonthly" type="number" step="0.01" class="form-control" value="${q.quota.monthly_limit}"></div>
+      </div>
+      <div class="small text-muted mt-2">上限填 0 表示该周期不限量</div>
+    `, [{t:'保存',c:'btn-primary',act:function(){ return saveAiQuota(tid); }}]);
+  };
+
+  async function saveAiQuota(tid){
+    const res=await POST('/api/aiquota/assign',{
+      teacher_id: tid,
+      amount: parseFloat($('#aqAmount').value)||0,
+      daily_limit: parseFloat($('#aqDaily').value)||0,
+      weekly_limit: parseFloat($('#aqWeekly').value)||0,
+      monthly_limit: parseFloat($('#aqMonthly').value)||0
+    });
+    if(res.code!==0){ toast(res.msg,'err'); return; }
+    hideModal(); toast('已保存'); loadAihub();
+  }
 
   // -------- 基础配置（院系/课程/学期/系统参数） --------
   ROUTERS['admin-meta']=function(host){

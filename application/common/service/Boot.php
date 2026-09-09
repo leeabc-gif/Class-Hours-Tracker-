@@ -4,10 +4,12 @@ namespace app\common\service;
 use app\common\model\Course;
 use app\common\model\CourseFavorite;
 use app\common\model\Lesson;
+use app\common\model\Notice;
 use app\common\model\SchoolClass;
 use app\common\model\Setting;
 use app\common\model\Term;
 use app\common\service\AiConfig;
+use app\common\service\QuotaService;
 
 /**
  * 前端启动数据服务
@@ -44,6 +46,9 @@ class Boot
             ],
             'courses' => self::courses($user),
             'classes' => self::classes(),
+            // AI 额度与未读公告：随首屏下发，页面无需再单独请求
+            'ai_quota'      => QuotaService::summary($user->id),
+            'notice_unread' => Notice::unreadCount($user->id, $user->getData('role')),
         ];
     }
 

@@ -704,51 +704,38 @@ class AiEngine
     }
 
     /**
-     * 调用 OpenAI Chat Completions 兼容接口。
-     * 失败、超时、格式不识别或未配置时均返回 null，由本地规则结果继续响应。
+     * 调用大模型：统一走 AiProxy 中转
+     *
+     * 改走 AiProxy 后新增三点能力：
+     *   1) 多厂商渠道：按权重选路，失败自动切换下一渠道
+     *   2) 额度计费：解析 usage，按模型倍率折算点数并扣减教师额度
+     *   3) 用量留痕：每次调用进 ks_ai_usage_log，可审计、可统计
+     *
+     * 未配置任何渠道时，AiProxy 会自动回退到旧版单条配置
+     * （ks_setting.ai_* / 教师个人配置），因此升级不会让已配好的站点失效。
      */
     private static function callLLM($userId, $payload)
     {
-        $config = AiConfig::effective($userId);
-        if (!AiConfig::isConfigured($config) || !function_exists('curl_init')) return null;
-        if (!preg_match('#^https?://#i', $config['url'])) return null;
+        $messages = isset($payload['messages']) && is_array($payload['messages']) ? $payload['messages'] : [];
+        if (!$messages) return null;
 
-        $body = json_encode([
-            'model' => $config['model'],
-            'messages' => $payload['messages'],
-            'temperature' => 0.3,
-            'user' => 'user_' . intval($userId),
-        ], JSON_UNESCAPED_UNICODE);
-        if ($body === false) return null;
+        // 模型名沿用现有「系统 / 个人」配置的解析结果，保证升级前后行为一致
+        $config = AiConfig::effective($userId);
+        $model  = trim((string)$config['model']);
 
         try {
-            $ch = curl_init($config['url']);
-            curl_setopt_array($ch, [
-                CURLOPT_POST => true,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_HTTPHEADER => [
-                    'Content-Type: application/json',
-                    'Authorization: Bearer ' . $config['key'],
-                ],
-                CURLOPT_POSTFIELDS => $body,
-                CURLOPT_CONNECTTIMEOUT => 5,
-                CURLOPT_TIMEOUT => 30,
-                CURLOPT_SSL_VERIFYPEER => true,
+            $res = AiProxy::chat([
+                'teacher_id'  => intval($userId),
+                'model'       => $model,
+                'messages'    => $messages,
+                'temperature' => 0.3,
+                'source'      => 'chat',
             ]);
-            $resp = curl_exec($ch);
-            $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $err = curl_errno($ch);
-            curl_close($ch);
-
-            if ($err || $httpCode < 200 || $httpCode >= 300 || !$resp) return null;
-            $json = json_decode($resp, true);
-            if (!is_array($json)) return null;
-            if (isset($json['choices'][0]['message']['content'])) return trim((string)$json['choices'][0]['message']['content']);
-            if (isset($json['result']) && is_string($json['result'])) return trim($json['result']);
-            if (isset($json['output']['text']) && is_string($json['output']['text'])) return trim($json['output']['text']);
         } catch (\Throwable $e) {
             return null;
         }
-        return null;
+
+        if (empty($res['ok']) || $res['content'] === '') return null;
+        return $res['content'];
     }
 }

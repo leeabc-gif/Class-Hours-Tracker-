@@ -37,8 +37,20 @@ class CsrfVerify
         }
 
         $path = '/' . ltrim((string) $request->pathinfo(), '/');
+
+        // 携带 Bearer 凭据的调用（外部程序 / AI 网关）放行：
+        // 浏览器不会自动附带 Authorization 头，第三方站点也无法诱导浏览器带上，
+        // 因此这类请求不存在 CSRF 风险。
+        $auth = $request->header('Authorization', '');
+        if (is_string($auth) && stripos(trim($auth), 'Bearer ') === 0) {
+            return $next($request);
+        }
+
         foreach (self::ALLOW as $prefix) {
-            if ($prefix === '' || strpos($path, $prefix) === 0) {
+            // 统一补前导斜杠与 $path 对齐：
+            // 原写法 $path 带前导斜杠而白名单项不带，导致白名单实际从未命中。
+            $p = '/' . ltrim((string) $prefix, '/');
+            if ($p !== '/' && strpos($path, $p) === 0) {
                 return $next($request);
             }
         }

@@ -244,21 +244,21 @@ class AiConfig
         return $row && self::decryptKey((string)$row->api_key) !== '';
     }
 
-    private static function cipherKey()
+    public static function cipherKey()
     {
         $seed = defined('APP_AI_CONFIG_KEY') ? APP_AI_CONFIG_KEY : '';
         if ($seed === '') $seed = 'keshi-ai-config-change-this-key';
         return hash('sha256', $seed, true);
     }
 
-    private static function encryptKey($plain)
+    public static function encryptKey($plain)
     {
         $iv = function_exists('random_bytes') ? random_bytes(16) : openssl_random_pseudo_bytes(16);
         $cipher = openssl_encrypt($plain, 'AES-256-CBC', self::cipherKey(), OPENSSL_RAW_DATA, $iv);
         return 'v1:' . base64_encode($iv . $cipher);
     }
 
-    private static function decryptKey($encoded)
+    public static function decryptKey($encoded)
     {
         if ($encoded === '') return '';
         if (strpos($encoded, 'v1:') !== 0) return $encoded;
