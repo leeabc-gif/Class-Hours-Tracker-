@@ -910,6 +910,8 @@
       + '<span class="small text-muted" id="lessonSum"></span>'
       + '<span class="vr"></span>'
       + '<span class="small text-muted" id="lessonCheckedInfo">已选 0 条</span>'
+      + '<button type="button" class="btn btn-sm btn-outline-secondary" id="lessonCheckAllBtn" onclick="KS.checkAllCurrentPage()" title="一键勾选当前页所有行（再点一次取消）"><i class="bi bi-check2-square me-1"></i>全选当前页</button>'
+      + '<button type="button" class="btn btn-sm btn-outline-secondary" id="lessonCheckInvertBtn" onclick="KS.invertCurrentPage()" title="把当前页勾选状态反转"><i class="bi bi-arrow-down-up me-1"></i>反选</button>'
       + '<button class="btn btn-sm btn-outline-danger" id="lessonBatchDelBtn" disabled onclick="KS.lessonBatchDelete(\'ids\')"><i class="bi bi-trash me-1"></i>删除选中</button>'
       + '</div>'
       + '<nav><ul class="pagination pagination-sm mb-0" id="lessonPage"></ul></nav></div>'
@@ -978,10 +980,20 @@
     if (btn) btn.disabled = sel.length === 0;
     const ca = $('#lessonCheckAll');
     if (ca) {
-      if (checks.length === 0) { ca.checked = false; ca.indeterminate = false; return; }
-      const checkedCount = sel.length;
-      ca.checked = checkedCount === checks.length;
-      ca.indeterminate = checkedCount > 0 && checkedCount < checks.length;
+      if (checks.length === 0) { ca.checked = false; ca.indeterminate = false; }
+      else {
+        const checkedCount = sel.length;
+        ca.checked = checkedCount === checks.length;
+        ca.indeterminate = checkedCount > 0 && checkedCount < checks.length;
+      }
+    }
+    // 同步"全选当前页"按钮文字：全勾上时变成"取消全选"
+    const allBtn = $('#lessonCheckAllBtn');
+    if (allBtn) {
+      const allChecked = checks.length > 0 && Array.from(checks).every(c => c.checked);
+      allBtn.innerHTML = allChecked
+        ? '<i class="bi bi-x-square me-1"></i>取消全选'
+        : '<i class="bi bi-check2-square me-1"></i>全选当前页';
     }
   };
 
@@ -993,6 +1005,34 @@
   App.toggleCheckAll = function (cb) {
     const checks = document.querySelectorAll('.lesson-row-check');
     checks.forEach(c => { c.checked = cb.checked; });
+    App.updateCheckState();
+  };
+
+  /**
+   * "全选当前页" 按钮：一键把当前页所有行打勾（再点一次取消全部）
+   * 配套更新按钮文字和图标，交互更明显
+   */
+  App.checkAllCurrentPage = function () {
+    const checks = document.querySelectorAll('.lesson-row-check');
+    if (checks.length === 0) { toast('当前页没有可勾选的记录', 'warn'); return; }
+    const btn = $('#lessonCheckAllBtn');
+    const allChecked = Array.from(checks).every(c => c.checked);
+    checks.forEach(c => { c.checked = !allChecked; });
+    App.updateCheckState();
+    if (btn) {
+      btn.innerHTML = allChecked
+        ? '<i class="bi bi-check2-square me-1"></i>全选当前页'
+        : '<i class="bi bi-x-square me-1"></i>取消全选';
+    }
+  };
+
+  /**
+   * "反选" 按钮：把当前页每行的 checked 状态取反
+   */
+  App.invertCurrentPage = function () {
+    const checks = document.querySelectorAll('.lesson-row-check');
+    if (checks.length === 0) { toast('当前页没有可操作的记录', 'warn'); return; }
+    checks.forEach(c => { c.checked = !c.checked; });
     App.updateCheckState();
   };
 
@@ -2371,6 +2411,7 @@
             <div class="col-6"><label class="form-label">当前版本</label><div class="fs-4 fw-bold" id="udCurrent">—</div><div class="small text-muted">出厂基线 <span id="udBaseline">—</span></div></div>
             <div class="col-6"><label class="form-label">最新版本</label><div class="fs-4 fw-bold text-success" id="udLatest">—</div><div class="small text-muted" id="udLastCheck"></div></div>
           </div>
+          <div class="small text-danger d-none" id="udLastErr" style="word-break:break-all"></div>
           <div class="small text-muted mb-2">PHP <span id="udPhpVer">—</span></div>
           <div class="mb-3"><label class="form-label">更新清单地址 (manifest.json)</label>
             <input id="udManifest" class="form-control" placeholder="https://update.example.com/manifest.json"></div>
@@ -2420,10 +2461,28 @@
     if($('#udBaseline') && d.app_version_baseline) $('#udBaseline').textContent=d.app_version_baseline;
     if($('#udPhpVer') && d.php_version) $('#udPhpVer').textContent=d.php_version;
     if($('#udLastCheck') && d.last_check_at) $('#udLastCheck').textContent='上次检查：'+d.last_check_at;
+    // v1.0.3：失败原因在版本号卡片下方红字小字展示，避免「最新版本 —」让人摸不着头脑
+    const udErr=$('#udLastErr');
+    if(udErr){
+      if(d.last_check_error){
+        udErr.textContent='⚠ 上次检查未通过：'+d.last_check_error;
+        udErr.classList.remove('d-none');
+      }else{
+        udErr.textContent=''; udErr.classList.add('d-none');
+      }
+    }
     if($('#udSourceHint')){
-      const labels={github:'GitHub Releases（默认）',cnb:'CNB 官方 Release',custom:'自定义'};
-      const lbl=labels[d.update_source]||'兜底（manifest_url 直填）';
-      $('#udSourceHint').textContent='更新源：'+lbl+'　·　清单：'+ (d.manifest_url||'（未配置）');
+      // 实际生效的源 = 看 manifest_url 长啥样，比对 defaultGithub/defaultCnb 来判断
+      const GH='https://api.github.com/repos/leeabc-gif/Class-Hours-Tracker-/releases/latest';
+      const CNB='https://cnb.cool/bmayan/class-hours-tracker/-/releases/latest/download/manifest.json';
+      const mu=d.manifest_url||'';
+      let effLabel='';
+      if (mu === GH) effLabel='GitHub Releases（默认）';
+      else if (mu === CNB) effLabel='CNB 官方 Release（默认）';
+      else if (mu === d.manifest_url_custom && d.manifest_url_custom) effLabel='自定义（manifest_url 覆写）';
+      else if (mu) effLabel='自定义（manifest_url 直填）';
+      else effLabel='未配置';
+      $('#udSourceHint').textContent='更新源：'+effLabel+'　·　清单：'+ (mu||'（未配置）');
     }
     const rb=$('#udRollbackBtn'); if(rb) rb.disabled=!d.can_rollback;
     const tb=$('#udBackupTbody');

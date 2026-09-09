@@ -51,6 +51,13 @@
 
 ## 📦 最近更新
 
+**2026-09（v1.0.3）· CNB / GitHub latest URL 解析 + 检查失败可读提示 + 课时记录批量操作**
+
+- 🔧 **CNB `/-/releases/latest` 解析**：v1.0.2 只识别 GitHub 的 `api.github.com/repos/.../releases/latest` 一种入口，CNB 的 `cnb.cool/<owner>/<repo>/-/releases/latest` 拿不到真 manifest（404）。新增 `UpdateService::resolveCnbLatest()`：抓 CNB releases 列表页，从 HTML 抓 `vX.Y.Z` 形式的最新 tag，再拼回 `/-/releases/download/<tag>/manifest.json`；GitHub 与 CNB 共用 `resolveManifestEntry()` 链式入口
+- 🩺 **检查更新失败可读**：之前 `latest_version` 一栏永远显示 `—`，连失败原因都看不到。`Admin::updateCheck` 失败时也写 `update_last_check_at` + 新增 `update_last_check_error` 缓存；前端「最新版本」卡片下方新增红字提示区，直接展示错误摘要（如「CNB Release 资源未找到：仓库可能还没在 Releases 页发布带 manifest.json 资源的新版本 tag」）
+- 📝 **「更新源」提示文案修正**：之前同时显示「更新源：GitHub Releases」+「清单：cnb.cool/...」会让人误解；现在根据 manifest_url 与默认 URL 的实际匹配情况显示「GitHub Releases（默认） / CNB 官方 Release（默认） / 自定义（manifest_url 覆写 / 直填）」
+- ✅ **「我的课时记录」批量选择/删除**：补全 4 个之前只声明但未实现的回调（`updateCheckState / toggleCheckAll / lessonBatchDelete / lessonBatchByQuery`），新增显眼的「全选当前页 / 反选」按钮（紧贴"删除选中"），避免用户找不到全选入口
+
 **2026-09（v1.0.2）· GitHub Releases 更新源 + 一键重置示例数据**
 
 - 🐙 **默认走 GitHub Releases**：「基础配置 → 在线更新源」新增 `github / cnb / custom` 三选一下拉，**默认**指向 `api.github.com/repos/leeabc-gif/Class-Hours-Tracker-/releases/latest`（UpdateService 自动拉 API 拿 `tag_name`，再拼 `github.com/.../releases/download/<tag>/manifest.json` 拉真正的 manifest）；配套 `.github/workflows/release.yml`，**推送 `v*` tag 时自动构建** `release/keshi-<ver>.zip` + `release/manifest.json`（用 `tools/sign_manifest.php` 走 RSA-SHA256 签名），并以 GitHub Actions 的 `softprops/action-gh-release@v2` 发布为 Release 资产
@@ -204,6 +211,13 @@ In Chinese vocational (中职) schools, teacher class-period (课时) and payrol
 - 📱 **Responsive UI**: Bootstrap 5 + Chart.js — works on desktop and mobile
 
 ## 🆕 Recent Updates
+
+**2026-09 (v1.0.3) — CNB / GitHub latest URL resolver + readable check-failure + batch lesson ops**
+
+- 🔧 **CNB `/-/releases/latest` resolver**: v1.0.2 only recognised GitHub's `api.github.com/repos/.../releases/latest` entry. The CNB `cnb.cool/<owner>/<repo>/-/releases/latest` URL would 404 because there's no JSON API. Added `UpdateService::resolveCnbLatest()` — it fetches the CNB releases page, scrapes the latest `vX.Y.Z` tag from the HTML, and rewrites the URL to `/-/releases/download/<tag>/manifest.json`. Both providers go through a single `resolveManifestEntry()` chain
+- 🩺 **Readable check-failure reason**: the `latest_version` cell used to silently show `—` and gave no hint why. `Admin::updateCheck` now persists `update_last_check_at` and a new `update_last_check_error` cache on failure; a red-text error block sits under the version card on the system-update page
+- 📝 **Update-source hint fixed**: the previous "GitHub Releases" + "manifest: cnb.cool/..." combo was confusing. The hint now reflects the actually-resolved URL — `GitHub Releases (default)` / `CNB 官方 Release (default)` / `Custom (manifest_url override / direct)`
+- ✅ **Batch lesson selection / deletion**: the four callbacks declared in the page template (`updateCheckState / toggleCheckAll / lessonBatchDelete / lessonBatchByQuery`) were unimplemented and threw `ReferenceError`. They are now wired up, and two prominent buttons — **Select current page** and **Invert** — sit right next to **Delete selected** so users can find the bulk-select entry point
 
 **2026-09 (v1.0.2) — GitHub Releases channel + one-click demo-data reset**
 

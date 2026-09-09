@@ -1061,6 +1061,7 @@ class Admin extends Base
     {
         $cachedLatest = (string) Setting::get('update_last_check_latest', '');
         $cachedTime   = (string) Setting::get('update_last_check_at', '');
+        $cachedError  = (string) Setting::get('update_last_check_error', '');
         return $this->ok([
             'current_version'   => UpdateService::currentVersion(),
             'maintenance'       => Base::underMaintenance(),
@@ -1074,6 +1075,8 @@ class Admin extends Base
             // L-4：上次检查缓存的最新版本（首页刷新也能看到，不需点"检查更新"）
             'latest_version'    => $cachedLatest,
             'last_check_at'     => $cachedTime,
+            // v1.0.3：失败原因，让顶部直接显示为什么「最新版本」是 —
+            'last_check_error'  => $cachedError,
         ]);
     }
 
@@ -1091,18 +1094,26 @@ class Admin extends Base
         }
         // v1.0.2：注入管理员配置的 GitHub Token（公开仓库可空）
         UpdateService::setBearerToken((string) Setting::get('update_github_token', ''));
+        // v1.0.3：无论成功失败都刷新「上次检查时间」，避免失败时卡在旧值误导用户
+        $now = date('Y-m-d H:i:s');
         try {
             $info = UpdateService::check($manifestUrl);
-            // L-4：把 check 结果缓存下来，updateStatus 也能复用
             Setting::set('update_last_check_latest', (string) $info['latest_version']);
             Setting::set('update_last_check_at', (string) $info['checked_at']);
+            Setting::set('update_last_check_error', ''); // 成功就清掉旧错误
             $this->log('update_check', 'system', 0, '检查更新：当前 ' . $info['current_version'] . '，远程 ' . $info['latest_version']);
             return $this->ok($info);
         } catch (\Throwable $e) {
             \think\facade\Log::error('[update] check failed: ' . $e->getMessage(), [
                 'manifest_url' => $manifestUrl,
             ]);
-            return $this->fail('检查更新失败：' . $e->getMessage());
+            $err = $e->getMessage();
+            // v1.0.3：失败也写时间 + 错误摘要，updateStatus 端能直接显示给用户
+            Setting::set('update_last_check_at', $now);
+            // 截短避免 key 过长
+            if (strlen($err) > 480) $err = substr($err, 0, 480) . '…';
+            Setting::set('update_last_check_error', $err);
+            return $this->fail('检查更新失败：' . $err);
         }
     }
 

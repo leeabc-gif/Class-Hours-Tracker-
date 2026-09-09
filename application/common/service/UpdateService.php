@@ -87,8 +87,31 @@ class UpdateService
     public static function check($manifestUrl)
     {
         $manifestUrl = self::validateRemoteUrl($manifestUrl, '更新清单地址');
-        list($manifestUrl, $resolvedTag) = self::resolveGithubLatest($manifestUrl);
-        $json = self::httpGet($manifestUrl, self::MANIFEST_MAX, '更新清单');
+        // 链式解析：先识别 GitHub /releases/latest，再识别 CNB /-/releases/latest，
+        // 命中其一就把"latest"入口 URL 改写为带具体 tag 的 manifest 直链。
+        list($manifestUrl, $resolvedTag, $sourceKind) = self::resolveManifestEntry($manifestUrl);
+        try {
+            $json = self::httpGet($manifestUrl, self::MANIFEST_MAX, '更新清单');
+        } catch (\RuntimeException $e) {
+            // 把"远程资源 404"翻译成可读提示，避免用户对着 HTTP 状态码猜原因
+            $msg = $e->getMessage();
+            if (stripos($msg, '404') !== false || stripos($msg, '资源不存在') !== false) {
+                if ($sourceKind === 'cnb') {
+                    throw new \RuntimeException(
+                        'CNB Release 资源未找到：仓库可能还没在「Releases」页发布带 manifest.json 资源的新版本 tag。'
+                        . '请到 https://cnb.cool/<owner>/<repo>/-/releases 手动上传 manifest.json 和 keshi-<ver>.zip，'
+                        . '或在「基础配置」里把更新源改回 GitHub Releases（默认推荐）。',
+                        0, $e
+                    );
+                }
+                throw new \RuntimeException(
+                    '远程更新清单 404：请检查仓库路径是否正确、tag 是否带 manifest.json 资源。'
+                    . '常见原因：仓库尚未发布 Release 资源（只有 tag 没上传 manifest.json 和 zip）。',
+                    0, $e
+                );
+            }
+            throw $e;
+        }
         $data = json_decode($json, true);
         if (!is_array($data) || empty($data['latest_version'])) {
             throw new \RuntimeException('更新清单格式不正确：缺少 latest_version。');
@@ -116,7 +139,7 @@ class UpdateService
             'published_at'     => isset($data['published_at']) ? (string) $data['published_at'] : '',
             'files'            => $files,
             'checked_at'       => date('Y-m-d H:i:s'),
-            'source'           => $resolvedTag !== '' ? 'github:'.$resolvedTag : 'custom',
+            'source'           => $sourceKind.':'.($resolvedTag !== '' ? $resolvedTag : 'custom'),
         ];
     }
 
@@ -155,6 +178,96 @@ class UpdateService
         // 走严格 SSRF 校验
         $realUrl = self::validateRemoteUrl($realUrl, '更新清单地址');
         return [$realUrl, $tag];
+    }
+
+    /**
+     * 识别 CNB latest 入口 URL，自动解析出真正的 manifest URL。
+     * CNB 入口形如：
+     *   https://cnb.cool/<owner>/<repo>/-/releases/latest/download/manifest.json
+     *   https://cnb.cool/<owner>/<repo>/-/releases/latest
+     * 思路：
+     *   1) 抓取 <owner>/<repo>/-/releases 列表页（公开，无需鉴权）
+     *   2) 在 HTML 里找 vX.Y.Z 形式的最新 tag（兼容 v 前缀和无前缀）
+     *   3) 拼回 <owner>/<repo>/-/releases/download/<tag>/manifest.json
+     * 若 <owner>/<repo> 抽取失败 / HTML 抓不到 / 找不到合法 tag，抛可读异常。
+     *
+     * 返回 [最终 manifest URL, tag, 'cnb']
+     */
+    public static function resolveCnbLatest($manifestUrl)
+    {
+        $manifestUrl = trim((string) $manifestUrl);
+        // 只处理 latest 入口；带具体 tag 的 download URL 必须原样透传
+        if (!preg_match('#^https://cnb\.cool/([^/?#]+)/([^/?#]+)/-/releases/latest(?:/download/manifest\.json)?/?$#i', $manifestUrl, $m)) {
+            return [$manifestUrl, '', 'cnb'];
+        }
+        $owner = $m[1];
+        $repo  = $m[2];
+        $listUrl = "https://cnb.cool/{$owner}/{$repo}/-/releases";
+        $listUrl = self::validateRemoteUrl($listUrl, 'CNB Release 列表');
+        $html = self::httpGet($listUrl, 2 * 1024 * 1024, 'CNB Release 列表');
+        $tag = self::pickLatestTagFromCnbHtml($html);
+        if ($tag === '') {
+            throw new \RuntimeException(
+                'CNB Release 列表里未找到任何 tag。请先在 cnb.cool 仓库 Releases 页发布一个带 '
+                . 'manifest.json 资源的版本。'
+            );
+        }
+        $realUrl = "https://cnb.cool/{$owner}/{$repo}/-/releases/download/{$tag}/manifest.json";
+        $realUrl = self::validateRemoteUrl($realUrl, '更新清单地址');
+        return [$realUrl, $tag, 'cnb'];
+    }
+
+    /**
+     * 从 CNB Release 列表页 HTML 中找出"最新"tag
+     * 策略：抓所有 vX.Y.Z 或裸 X.Y.Z 形式（带 v 前缀优先），取按 version_compare 排序后的最大值。
+     * 接受带预发布后缀（-beta1, -rc2 等）。
+     */
+    public static function pickLatestTagFromCnbHtml($html)
+    {
+        if (!is_string($html) || $html === '') return '';
+        // value 保留 Release 的真实 tag；排序时单独使用去掉 v 前缀后的版本号。
+        $candidates = [];
+        if (preg_match_all('#\bv(\d+\.\d+\.\d+(?:-[A-Za-z0-9._-]+)?)\b#', $html, $m1)) {
+            foreach ($m1[1] as $v) $candidates['v' . $v] = $v;
+        }
+        // 退路：抓裸 X.Y.Z（且排除已经带 v 前缀的匹配）
+        if (preg_match_all('#(?<![A-Za-z0-9.vV])(\d+\.\d+\.\d+(?:-[A-Za-z0-9._-]+)?)\b#', $html, $m2)) {
+            foreach ($m2[1] as $v) $candidates[$v] = $v;
+        }
+        if (empty($candidates)) return '';
+        uksort($candidates, function ($tagA, $tagB) use ($candidates) {
+            return version_compare($candidates[$tagA], $candidates[$tagB]);
+        });
+        end($candidates);
+        return (string) key($candidates);
+    }
+
+
+    /**
+     * 链式解析：识别 GitHub / CNB 两种 latest 入口 URL。
+     * 命中 GitHub → 改写为 github.com/.../releases/download/<tag>/manifest.json
+     * 命中 CNB   → 改写为 cnb.cool/.../-/releases/download/<tag>/manifest.json
+     * 其他       → 原样返回
+     *
+     * 返回 [最终 manifest URL, 解析出的 tag 或 '', 'github'|'cnb'|'custom']
+     */
+    public static function resolveManifestEntry($manifestUrl)
+    {
+        $manifestUrl = trim((string) $manifestUrl);
+        if ($manifestUrl === '') {
+            return [$manifestUrl, '', 'custom'];
+        }
+        $lower = strtolower($manifestUrl);
+        if (strpos($lower, 'https://api.github.com/repos/') === 0
+            || strpos($lower, 'https://github.com/') === 0) {
+            list($u, $tag) = self::resolveGithubLatest($manifestUrl);
+            return [$u, $tag, 'github'];
+        }
+        if (strpos($lower, 'https://cnb.cool/') === 0) {
+            $ret = self::resolveCnbLatest($manifestUrl);
+            return [$ret[0], $ret[1], 'cnb'];
+        }
+        return [$manifestUrl, '', 'custom'];
     }
 
     /**

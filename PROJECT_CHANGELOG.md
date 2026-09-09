@@ -6,6 +6,21 @@
 ---
 
 
+## v1.0.3 · 2026-09-09 · CNB / GitHub latest URL 解析 + 检查失败可读提示 + 课时记录批量操作
+
+### 修复（patch）
+- **CNB `/-/releases/latest` 解析**：v1.0.2 只识别 `api.github.com/repos/.../releases/latest` 一种入口，CNB 的 `cnb.cool/<owner>/<repo>/-/releases/latest` 拿不到真 manifest（404）。本次新增 `UpdateService::resolveCnbLatest()`：抓 `cnb.cool/<owner>/<repo>/-/releases` 列表页，从 HTML 抓 `vX.Y.Z` 形式的最新 tag，再拼回 `/-/releases/download/<tag>/manifest.json`。GitHub 与 CNB 共用 `resolveManifestEntry()` 链式入口
+- **检查更新失败原因可视化**：之前 `latest_version` 一栏永远显示 `—`，连失败原因都看不到。本次 `Admin::updateCheck` 失败时也写 `update_last_check_at` + 新增 `update_last_check_error` 缓存；前端「最新版本」卡片下方新增红字提示区，直接展示错误摘要（如「CNB Release 资源未找到：仓库可能还没在 Releases 页发布带 manifest.json 资源的新版本 tag」）
+- **「更新源」提示文案修正**：之前同时显示「更新源：GitHub Releases」+「清单：cnb.cool/...」会让人误解；现在根据 manifest_url 与默认 URL 的实际匹配情况显示「GitHub Releases（默认） / CNB 官方 Release（默认） / 自定义（manifest_url 覆写 / 直填）」
+- **「我的课时记录」批量选择/删除**：补全 `App.updateCheckState / toggleCheckAll / lessonBatchDelete / lessonBatchByQuery` 4 个之前只声明但未实现的回调，新增显眼的「全选当前页 / 反选」按钮（紧贴"删除选中"），避免用户找不到全选入口
+
+### 兼容性
+- 100% 兼容 v1.0.2，管理员无感知升级
+- `update_manifest_url` 字段不变，老配置直接生效
+- 新增的 `update_last_check_error` setting 字段是可选的，老数据没这个 key 不影响逻辑
+- `app_version` 字段没动，旧版本号会被 update 流程正确覆盖
+
+
 ## v1.0.2 · 2026-09-09 · GitHub Releases 更新源 + 一键重置示例数据
 
 ### 新功能（minor）
