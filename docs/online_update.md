@@ -164,10 +164,10 @@ php tools/sign_manifest.php \
 
 ## 10. 发布者侧：CI 私钥 + 自托管更新源
 
-### 10.1 在 GitHub 配置 manifest 签名私钥
+### 10.1 在 GitHub / CNB 配置 manifest 签名私钥
 
-`.github/workflows/release.yml` 会在每次推送 `v*` tag 时调用 `tools/sign_manifest.php`，
-需要把 RSA **私钥**以 Secret 形式注入到 CI。
+`.github/workflows/release.yml` + `.cnb.yml` 都会在每次推送 `v*` tag 时调用
+`tools/sign_manifest.php`，需要把 RSA **私钥**以 Secret 形式注入到 CI。
 
 1. 仓库根目录（发布端）执行：
    ```bash
@@ -178,11 +178,23 @@ php tools/sign_manifest.php \
    # 公钥替换 config/update_trust.php 的 public_key（PEM 文本，含头尾标记）
    # 私钥准备好给 CI 用
    ```
-2. GitHub 仓库 → **Settings → Secrets and variables → Actions** → **New repository secret**
+2. **GitHub** 仓库 → **Settings → Secrets and variables → Actions** → **New repository secret**
    - Name：`MANIFEST_PRIVATE_KEY`
    - Value：把 `_env/ks_update_priv.pem` 文件**完整文本**（含 `-----BEGIN/END-----` 头尾）粘贴进去
-3. CNB 仓库（如使用）→ **Settings → Secrets** → 同样添加 `MANIFEST_PRIVATE_KEY`（CNB 的 release 任务也读它）
-4. 推送 `v*` tag → CI 跑签 → manifest.json 自动随 zip 上传为 Release 资产
+3. **CNB** 走 `imports` 机制（CNB 不直接支持 repo-level secrets）：
+   1. 在 CNB 新建一个**密钥仓库**（仓库类型选"密钥"），例如 `bmayan/secrets`
+   2. 在该仓库根目录创建文件 `envs.yml`，内容：
+      ```yaml
+      MANIFEST_PRIVATE_KEY: |
+        -----BEGIN RSA PRIVATE KEY-----
+        MIIEowIBAAKCAQEAu33RkbQvEUftLUc5V6ZBJhzcOHhXxOD7qLHdEceUEeihrdIh
+        hmoVBGm1gnayuD3kvu5RcCuRjZO15kZLa51s6A/Y1peZtsMVTlGbdRwb+hn2CgYb
+        ... （完整 PEM 文本）...
+        -----END RSA PRIVATE KEY-----
+      ```
+      注意 `|` 块标量保留换行；PEM 头尾标记必须保留
+   3. 推送 `v*` tag → `.cnb.yml` 通过 `imports: https://cnb.cool/bmayan/secrets/-/blob/main/envs.yml` 把私钥注入 `$MANIFEST_PRIVATE_KEY` 环境变量
+4. 推送 `v*` tag → 两端 CI 跑签 → manifest.json 自动随 zip 上传为 Release 资产
 
 > 私钥一旦泄露，立即生成新密钥对并轮换 `config/update_trust.php` 公钥。
 > 详见 `config/update_trust.php` 文件头注释。
