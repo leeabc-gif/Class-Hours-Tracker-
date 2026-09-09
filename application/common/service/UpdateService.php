@@ -1315,7 +1315,8 @@ class UpdateService
             return false;
         }
         $ok = openssl_verify($canon, $sig, $key, OPENSSL_ALGO_SHA256);
-        openssl_free_key($key);
+        // PHP 8+ 会自动释放 OpenSSLKey 对象，无需调用已弃用的 openssl_free_key()
+        unset($key);
         return $ok === 1;
     }
 

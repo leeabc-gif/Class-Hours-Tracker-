@@ -50,8 +50,24 @@
             - ASSET_BASE="keshi-${VER}"
             - cd "$WORKSPACE"
             - |
-              if [ -f database/migrations/20260909_v105_version_sync.sql ]; then
-                cp database/migrations/20260909_v105_version_sync.sql upgrade.sql
+              rm -f upgrade.sql
+              # 动态匹配当前版本的迁移（兼容 sh：用 tr 去点号，不用 bash 的 ${VAR//./}）
+              PLAIN=$(printf '%s' "$VER" | tr -d '.')
+              MIG=""
+              for cand in \
+                "database/migrations/20260909_v${PLAIN}_version_sync.sql" \
+                "database/migrations/20260909_${PLAIN}_version_sync.sql" ; do
+                if [ -f "$cand" ]; then MIG="$cand"; break; fi
+              done
+              # 退路：取 migrations 目录中版本号最大的 *_version_sync.sql
+              if [ -z "$MIG" ]; then
+                MIG=$(ls -1 database/migrations/*_version_sync.sql 2>/dev/null | sort | tail -n 1 || true)
+              fi
+              if [ -n "$MIG" ] && [ -f "$MIG" ]; then
+                cp "$MIG" upgrade.sql
+                echo "upgrade.sql <- $MIG"
+              else
+                echo "未找到 *_version_sync.sql，本次发布包不含 upgrade.sql"
               fi
             - |
               zip -r "release/${ASSET_BASE}.zip" . \

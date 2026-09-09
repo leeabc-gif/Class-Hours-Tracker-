@@ -1,19 +1,19 @@
 {
-    "latest_version": "1.0.6",
+    "latest_version": "1.0.7",
     "min_php": "7.4",
-    "published_at": "2026-09-09T06:16:28+00:00",
-    "changelog": "修复节次选项，并将课时列表中的班级 ID 显示为班级名称。",
+    "published_at": "2026-09-09T09:36:53+00:00",
+    "changelog": "### 修复\n- **在线更新始终失败（核心）**：发布清单 `manifest.json` 记录的 `sha256`/`size` 与实际发布包不一致，导致下载后校验必然失败、升级中止。本次重新按统一规则打包并重新签名，保证清单与包严格对应。\n- **升级后版本号不推进**：CI 在准备 `upgrade.sql` 时未正确取到当前版本（GitHub 侧缺少 `VER` 变量、CNB 侧硬编码 `v1.0.5`），任何版本都打包 `v1.0.5` 的迁移，导致升级后版本号被写成 `1.0.5`、反复提示可更新。现改为优先精确匹配当前版本迁移，退路取最大版本。\n- **升级 SQL 执行报错**：`ks_setting` 表没有 `updated_at` 字段，但 `v1.0.5`/`v1.0.6` 迁移在写该列，执行时报 `Unknown column` 使升级回滚。已移除该赋值。\n- **发布清单 changelog 恒为空**：签名工具 `--changelog-file=` 参数偏移多算 1 位导致路径首字符被截、文件读不到；且 CHANGELOG 首行带 UTF-8 BOM 时正则匹配不到版本标题。均已修复。\n- **发布包残缺**：手工打包时只纳入了改动过的 8 个文件，跨版本升级/全新安装会缺文件。新增 `tools/build_release.php` 统一打包 300 个文件。\n\n### 新增\n- `tools/build_release.php`：与 CI 同一套白/黑名单的发布包构建工具，自动挑选当前版本 `upgrade.sql` 并输出 `sha256` 供签名。\n- 签名工具参数解析改为统一 `--key=value` 解析，避免手写字符串偏移再次出错。",
     "files": [
         {
-            "name": "keshi-1.0.6.zip",
-            "url": "https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/v1.0.6/keshi-1.0.6.zip",
-            "sha256": "0bd875c1e9de13d49ea550ece9b519d42ff9e8a119071a53e26eeda72bdf893a",
-            "version": "1.0.6",
-            "size": 607038
+            "name": "keshi-1.0.7.zip",
+            "url": "https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/v1.0.7/keshi-1.0.7.zip",
+            "sha256": "55160be067425d7f6a663a1d7b5e899085336a5b49174a6a107f64ad0debabf6",
+            "version": "1.0.7",
+            "size": 673172
         }
     ],
     "requires": {
         "from_version": "1.0.5"
     },
-    "signature": "j9oYJoWpqLIg6d4z7xxJH9Z9dwEzznb9TtTYteL4d0myko4rWU4RHz6RYn0wQ54IBbV621meheUVTW/v60cqDULqZmdTrB4fyVZhksYCrxl0JUZqyE6mma7OMeSIvWxy4PpLv6I65LMN34pjVqTGZqK+nauTlyQ8mIRogRfve6m2rWhA5J/1Fkb7lP/IwxYjGaMRBx5vH6rqL9dQqhe17Er5QhZLryHslG2TaUPMequWC7ZwrecLvpfh9kFFLuDQ9aDPejWuvHiUhVV7lhy/Th/Ur/ffvvlvI3KFlf6wGeopTjk7Z5IpU03whnd++cH1y7k0tVc0bl5mB8eMWYVKmQ=="
+    "signature": "q2bH3HydEMF5BCmSr+gYnaTzmZdViQnmpvkcliruNYUoh532tfU5GpV6gKdyENvtCrQ9hNaPL7GUEpoakRtGM72DIPFaMls/dsbmt4f/ngic/IeMVQgMXExgJYJEZ2A5Git3gpjV1DsyUg0iegzJ6SL71TP3MLTbGbnUpX3vx4Jadtao/SWobGE2/I+yTNq2BbIoqYJuE66ihsx5MBTp2Wi9s2uiKDE3vQzy2ZnDx5ajo9QU/PKUqdJG8rr5+a60fn+8c31f9mnc4sPH2UEtJ47dooZPIyUtseQceHTWr2QuPK8U4WtKW9D3GFRJ7GL7dJ5SnAhP+Uy3mt4dx3gd8w=="
 }

@@ -33,14 +33,28 @@ jobs:
           echo "asset_base=keshi-$VER" >> $GITHUB_OUTPUT
 
       - name: Prepare upgrade.sql
+        env:
+          VER: ${{ steps.v.outputs.version }}
         run: |
+          set -eu
           mkdir -p release
-          if [ -f "database/migrations/20260909_${VER//./}_version_sync.sql" ]; then
-            cp "database/migrations/20260909_${VER//./}_version_sync.sql" upgrade.sql
-          elif [ -f database/migrations/20260909_v105_version_sync.sql ]; then
-            cp database/migrations/20260909_v105_version_sync.sql upgrade.sql
-          elif [ -f database/migrations/20260909_v104_version_sync.sql ]; then
-            cp database/migrations/20260909_v104_version_sync.sql upgrade.sql
+          rm -f upgrade.sql
+          # 优先精确匹配当前版本（兼容 "20260909_v107_..." 与 "20260909_107_..." 两种命名）
+          MIG=""
+          for cand in \
+            "database/migrations/20260909_v${VER//./}_version_sync.sql" \
+            "database/migrations/20260909_${VER//./}_version_sync.sql" ; do
+            if [ -f "$cand" ]; then MIG="$cand"; break; fi
+          done
+          # 退路：取 migrations 目录中版本号最大的 *_version_sync.sql（按文件名排序）
+          if [ -z "$MIG" ]; then
+            MIG="$(ls -1 database/migrations/*_version_sync.sql 2>/dev/null | sort | tail -n 1 || true)"
+          fi
+          if [ -n "$MIG" ] && [ -f "$MIG" ]; then
+            cp "$MIG" upgrade.sql
+            echo "upgrade.sql <- $MIG"
+          else
+            echo "::warning::未找到 *_version_sync.sql，本次发布包不含 upgrade.sql"
           fi
           # 将当前版本迁移放在项目根，随后由 zip 一并打包
 

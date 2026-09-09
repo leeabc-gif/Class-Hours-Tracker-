@@ -32,11 +32,11 @@ error_reporting(E_ALL);
 ini_set('display_errors', '1');
 
 $autoload = __DIR__ . '/../vendor/autoload.php';
-if (!is_file($autoload)) {
-    fwrite(STDERR, "缺少 vendor/autoload.php，请先执行 composer install。\n");
-    exit(2);
+if (is_file($autoload)) {
+    require $autoload;
+} else {
+    require __DIR__ . '/../application/common/service/UpdateService.php';
 }
-require $autoload;
 
 use app\common\service\UpdateService;
 
@@ -54,24 +54,25 @@ $opts         = [
     'min_php'         => '',
     'from_version'    => '',
 ];
+// 统一解析 --key=value（不再手写字符串偏移，避免 "吃掉首字符" 类偏移 bug）
 foreach ($args as $a) {
     if ($a === '--check') { $checkOnly = true; continue; }
-    if (strpos($a, '--out=') === 0)             { $outFile = substr($a, 6); continue; }
-    if (strpos($a, '--version=') === 0)         { $opts['version'] = substr($a, 10); continue; }
-    if (strpos($a, '--tag=') === 0)             { $opts['tag'] = substr($a, 6); continue; }
-    if (strpos($a, '--package=') === 0)         { $opts['package'] = substr($a, 10); continue; }
-    if (strpos($a, '--private-key=') === 0)     { $opts['private_key'] = substr($a, 14); continue; }
-    if (strpos($a, '--changelog-file=') === 0)  { $opts['changelog_file'] = substr($a, 18); continue; }
-    if (strpos($a, '--min-php=') === 0)         { $opts['min_php'] = substr($a, 10); continue; }
-    if (strpos($a, '--from-version=') === 0)    { $opts['from_version'] = substr($a, 16); continue; }
-    if ($a === '-h' || $a === '--help')         { printHelp(); exit(0); }
+    if ($a === '-h' || $a === '--help') { printHelp(); exit(0); }
+    if (preg_match('/^--([a-z][a-z-]*)=([\s\S]*)$/i', $a, $m)) {
+        $key = str_replace('-', '_', strtolower($m[1]));
+        if ($key === 'out') { $outFile = $m[2]; continue; }
+        if (array_key_exists($key, $opts)) { $opts[$key] = $m[2]; continue; }
+        fwrite(STDERR, "未知参数: --{$m[1]}\n");
+        exit(2);
+    }
     $manifestFile = $a;
 }
 
 // CI 模式：用 --version/--package 自动组装 manifest
 $ciMode = $opts['version'] !== '' && $opts['package'] !== '';
 if ($ciMode) {
-    $manifestFile = $manifestFile ?: 'release/manifest.json';
+    // 指定了 --out 时，中间文件直接落到 --out，避免污染 release/manifest.json
+    $manifestFile = $manifestFile ?: ($outFile ?: 'release/manifest.json');
     $version = $opts['version'];
     $tag     = $opts['tag'] !== '' ? $opts['tag'] : ('v' . $version);
     $pkg     = $opts['package'];
@@ -166,7 +167,8 @@ if ($canon === '') {
     exit(2);
 }
 openssl_sign($canon, $signature, $priv, OPENSSL_ALGO_SHA256);
-openssl_free_key($priv);
+// PHP 8+ 会自动释放 OpenSSLKey 对象，无需调用已弃用的 openssl_free_key()
+unset($priv);
 if ($signature === '') {
     fwrite(STDERR, "签名失败。\n");
     exit(2);
@@ -191,6 +193,9 @@ echo "请同步把对应公钥放入 config/update_trust.php，并把清单部�
  */
 function extractChangelogSection($content, $version)
 {
+    // 去掉 UTF-8 BOM：否则首行 "## vX.Y.Z" 因前面有 BOM 而匹配不到，
+    // 导致「最新版本正好写在文件第一行」时 changelog 提取结果为空。
+    $content = preg_replace('/^\xEF\xBB\xBF/', '', (string) $content);
     $lines = preg_split("/\r?\n/", $content);
     $capture = false;
     $out = [];

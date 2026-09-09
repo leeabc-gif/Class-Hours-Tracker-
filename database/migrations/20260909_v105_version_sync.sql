@@ -3,9 +3,10 @@
 -- 仅将历史版本同步到 1.0.5，不覆盖更高版本。
 -- ============================================================
 
+-- 注意：ks_setting 表没有 updated_at 字段，不要写该列（否则升级时报 Unknown column）
+
 UPDATE `ks_setting`
-   SET `cfg_value` = '1.0.5',
-       `updated_at` = UNIX_TIMESTAMP()
+   SET `cfg_value` = '1.0.5'
  WHERE `cfg_key` = 'app_version'
    AND (CAST(`cfg_value` AS DECIMAL(10,3)) < 1.005 OR `cfg_value` IN ('', '0'));
 
