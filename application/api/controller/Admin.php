@@ -849,43 +849,44 @@ class Admin extends Base
     ];
 
     /**
-     * GitHub Releases 更新源预设 URL（默认仓库 leeabc-gif/Class-Hours-Tracker-）
-     * 注意：GitHub 公开 release 的资产 URL 形式是
-     *   https://github.com/<owner>/<repo>/releases/download/<tag>/<asset>
-     * GitHub 的 releases/latest 是 HTML 跳转页，不会直接给出 manifest.json，
-     * 所以这里用具体的 v* tag + 资产名，tag 会在 CI 中以环境变量传入。
-     * manifest 资产名统一用 manifest.json（与现有 UpdateService 字段一致）。
+     * GitHub Releases 默认 URL（v1.0.2 起的默认更新源）
+     * 公开仓库 `leeabc-gif/Class-Hours-Tracker-` 的 latest release 资产
+     * manifest 名固定为 manifest.json，资产名固定为 keshi-<ver>.zip
      */
     public static function defaultGithubManifestUrl()
     {
-        $tag = trim((string) config('app.version', '1.0.2'));
-        // 公开仓库 latest 指向最新 tag，CI 会在每次 push v* 时把 manifest.json 推上去
         return 'https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/latest/download/manifest.json';
     }
 
     /**
+     * CNB 官方 Release 默认 URL（v1.0.1 起的官方发布通道，仅作兼容保留）
+     */
+    public static function defaultCnbManifestUrl()
+    {
+        return 'https://cnb.cool/bmayan/class-hours-tracker/-/releases/latest/download/manifest.json';
+    }
+
+    /**
      * 根据 update_source 拼出实际可用的 manifest URL
-     * - github：返回 defaultGithubManifestUrl()（可被管理员在 update_manifest_url 覆写）
-     * - cnb：返回历史默认 cnb.cool 源（保留兼容）
-     * - custom：返回 update_manifest_url 自定义值
+     * - github（v1.0.2 默认）：返回 GitHub Releases 默认 URL（可被管理员在 update_manifest_url 覆写）
+     * - cnb（v1.0.1 兼容）：返回 CNB 官方默认 URL（可被管理员在 update_manifest_url 覆写）
+     * - custom：返回 update_manifest_url 自定义值（必须由管理员手动填写）
      * - 空 / 其他：返回 update_manifest_url 现存值（兜底）
      */
     public static function resolveManifestUrl()
     {
-        $source = (string) Setting::get('update_source', '');
+        $source = (string) Setting::get('update_source', 'github');
         $custom = (string) Setting::get('update_manifest_url', '');
         if ($source === 'github') {
-            // 若管理员没覆写过 manifest URL，则用 GitHub 默认；否则尊重其手填
             return $custom !== '' ? $custom : self::defaultGithubManifestUrl();
         }
         if ($source === 'cnb') {
-            return $custom !== '' ? $custom
-                : 'https://cnb.cool/bmayan/class-hours-tracker/-/releases/latest/download/manifest.json';
+            return $custom !== '' ? $custom : self::defaultCnbManifestUrl();
         }
         if ($source === 'custom') {
             return $custom;
         }
-        return $custom;
+        return $custom !== '' ? $custom : self::defaultGithubManifestUrl();
     }
 
     public function settings()
