@@ -22,7 +22,7 @@ INSERT INTO `ks_setting` (`cfg_key`,`cfg_value`,`remark`) VALUES
 ('ai_api_url','','真实大模型接口地址，留空则回落本地规则引擎'),
 ('ai_api_key','','真实大模型 API Key'),
 ('ai_model','','真实大模型模型名'),
-('app_version','1.0.0','系统当前版本（在线更新维护）'),
+('app_version','1.0.4','系统当前版本（在线更新维护）'),
 ('update_manifest_url','https://cnb.cool/bmayan/class-hours-tracker/-/releases/latest/download/manifest.json','在线更新清单地址，默认指向 CNB 官方 Release 公开下载；管理员可在「基础配置」覆盖');
 
 -- ----------------------------

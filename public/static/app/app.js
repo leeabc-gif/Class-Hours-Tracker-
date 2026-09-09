@@ -902,7 +902,7 @@
           '<button class="btn btn-outline-secondary btn-sm" onclick="KS.lessonBatchByQuery(\'delete\')" title="按当前筛选条件一键删除所有匹配记录"><i class="bi bi-trash me-1"></i>一键删除当前查询</button>'
         + '<button class="btn btn-outline-success btn-sm" onclick="KS.exportMine()"><i class="bi bi-download me-1"></i>导出</button>')
       + '<div class="table-responsive"><table class="table"><thead><tr>'
-      + '<th style="width:36px"><input type="checkbox" id="lessonCheckAll" onclick="KS.toggleCheckAll(this)"></th>'
+      + '<th style="width:36px"><input type="checkbox" id="lessonCheckAll" onchange="KS.toggleCheckAll(this)" aria-label="全选当前页"></th>'
       + '<th>周</th><th>星期</th><th>节次</th><th>课程</th><th>班级</th><th>类型</th><th>节数</th><th class="text-end">金额</th><th>来源</th><th>授课日期</th><th style="width:200px">操作</th>'
       + '</tr></thead><tbody id="lessonTbody"></tbody></table></div>'
       + '<div class="card-b d-flex justify-content-between align-items-center pt-2">'
@@ -957,8 +957,7 @@
       for (let i=1;i<=maxPage;i++) ph += show(i,i,false);
       ph += show('»', Math.min(maxPage, lessonPageNo+1), lessonPageNo>=maxPage);
       $('#lessonPage').innerHTML = ph;
-      // 重渲后清掉全选框 & 勾选状态
-      const ca = $('#lessonCheckAll'); if (ca) ca.checked = false;
+      const ca = $('#lessonCheckAll'); if (ca) { ca.checked = false; ca.indeterminate = false; }
       KS.updateCheckState();
     } catch (e) {}
   }
@@ -971,7 +970,7 @@
    * 由 onchange / 翻页 / 重渲后调用
    */
   App.updateCheckState = function () {
-    const checks = document.querySelectorAll('.lesson-row-check');
+    const checks = document.querySelectorAll('#lessonTbody .lesson-row-check');
     const sel = [];
     checks.forEach(c => { if (c.checked) sel.push(c.value); });
     const info = $('#lessonCheckedInfo');
@@ -1003,7 +1002,7 @@
    * 后端 batchDelete 会用 ids 全量校验，不在前端的页/全集合里糊弄
    */
   App.toggleCheckAll = function (cb) {
-    const checks = document.querySelectorAll('.lesson-row-check');
+    const checks = document.querySelectorAll('#lessonTbody .lesson-row-check');
     checks.forEach(c => { c.checked = cb.checked; });
     App.updateCheckState();
   };
@@ -1013,7 +1012,7 @@
    * 配套更新按钮文字和图标，交互更明显
    */
   App.checkAllCurrentPage = function () {
-    const checks = document.querySelectorAll('.lesson-row-check');
+    const checks = document.querySelectorAll('#lessonTbody .lesson-row-check');
     if (checks.length === 0) { toast('当前页没有可勾选的记录', 'warn'); return; }
     const btn = $('#lessonCheckAllBtn');
     const allChecked = Array.from(checks).every(c => c.checked);
@@ -1030,7 +1029,7 @@
    * "反选" 按钮：把当前页每行的 checked 状态取反
    */
   App.invertCurrentPage = function () {
-    const checks = document.querySelectorAll('.lesson-row-check');
+    const checks = document.querySelectorAll('#lessonTbody .lesson-row-check');
     if (checks.length === 0) { toast('当前页没有可操作的记录', 'warn'); return; }
     checks.forEach(c => { c.checked = !c.checked; });
     App.updateCheckState();
@@ -1041,7 +1040,7 @@
    */
   App.lessonBatchDelete = function (mode) {
     if (mode === 'all') return App.lessonBatchByQuery('delete');
-    const checks = document.querySelectorAll('.lesson-row-check:checked');
+    const checks = document.querySelectorAll('#lessonTbody .lesson-row-check:checked');
     if (checks.length === 0) { toast('请先勾选要删除的记录', 'warn'); return; }
     if (checks.length > 500) { toast('单次最多删除 500 条', 'warn'); return; }
     const ids = Array.from(checks).map(c => parseInt(c.value, 10)).filter(n => n > 0);
@@ -2414,7 +2413,7 @@
         <div class="card mb-3"><div class="card-h"><i class="bi bi-arrow-repeat text-primary"></i><span class="tt">系统在线更新</span></div>
         <div class="card-b">
           <div class="row g-2 mb-3">
-            <div class="col-6"><label class="form-label">当前版本</label><div class="fs-4 fw-bold" id="udCurrent">—</div><div class="small text-muted">出厂基线 <span id="udBaseline">—</span></div></div>
+            <div class="col-6"><label class="form-label">当前已安装版本</label><div class="fs-4 fw-bold" id="udCurrent">—</div><div class="small text-muted">代码基线 <span id="udBaseline">—</span></div></div>
             <div class="col-6"><label class="form-label">最新版本</label><div class="fs-4 fw-bold text-success" id="udLatest">—</div><div class="small text-muted" id="udLastCheck"></div></div>
           </div>
           <div class="small text-danger d-none" id="udLastErr" style="word-break:break-all"></div>

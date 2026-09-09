@@ -32,6 +32,14 @@ jobs:
           echo "version=$VER"  >> $GITHUB_OUTPUT
           echo "asset_base=keshi-$VER" >> $GITHUB_OUTPUT
 
+      - name: Prepare upgrade.sql
+        run: |
+          mkdir -p release
+          if [ -f database/migrations/20260909_v104_version_sync.sql ]; then
+            cp database/migrations/20260909_v104_version_sync.sql upgrade.sql
+          fi
+          # 将当前版本迁移放在项目根，随后由 zip 一并打包
+
       - name: Build release zip
         env:
           ASSET_BASE: ${{ steps.v.outputs.asset_base }}
@@ -47,17 +55,12 @@ jobs:
             -x ".git/*" \
             -x "release/*" \
             -x ".github/*" \
+            -x "_env/*" \
+            -x ".codebuddy/*" \
             -x "tools/sign_manifest.php"
           ls -la release/
+          rm -f upgrade.sql
 
-      - name: Prepare upgrade.sql
-        run: |
-          mkdir -p release
-          if [ -f database/migrations/20260909_v102_github_default_and_reset.sql ]; then
-            cp database/migrations/20260909_v102_github_default_and_reset.sql release/upgrade.sql
-          fi
-          # 注：未来版本如果只新增迁移文件，可在 sign_manifest 之前合并所有 migrations
-          # 当前实现只把 v1.0.2 的迁移打包进 release/upgrade.sql
 
       - name: Sign manifest
         id: sign

@@ -1,19 +1,19 @@
 {
-    "latest_version": "1.0.3",
+    "latest_version": "1.0.4",
     "min_php": "7.4",
-    "published_at": "2026-09-09T04:11:16+00:00",
-    "changelog": "### v1.0.3 修复\n- 修复 CNB Releases latest 地址无法解析、检查更新返回 HTTP 404 的问题\n- 更新检查失败时记录检查时间并显示明确的失败原因\n- 修正更新页面的实际更新源提示，最新版本获取成功后正常显示版本号\n- 补全课时记录批量选择与批量删除，新增全选当前页和反选按钮",
+    "published_at": "2026-09-09T05:06:27+00:00",
+    "changelog": "### v1.0.4 修复\n- 修复课时列表全选和批量删除范围不一致\n- 同步系统已安装版本与代码基线\n- 新增版本同步迁移并修正发布包升级 SQL 打包顺序",
     "files": [
         {
-            "name": "keshi-1.0.3.zip",
-            "url": "https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/v1.0.3/keshi-1.0.3.zip",
-            "sha256": "84f7a6cbfeea80449f1e733f136a5c9a07257738f0ca8daf9e241bebd06cdc67",
-            "version": "1.0.3",
-            "size": 655040
+            "name": "keshi-1.0.4.zip",
+            "url": "https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/v1.0.4/keshi-1.0.4.zip",
+            "sha256": "e07e99011ab7fb6f81e3791117ebc62bab34b35f11011ea0ac2ca32e358d2bef",
+            "version": "1.0.4",
+            "size": 657818
         }
     ],
     "requires": {
-        "from_version": "1.0.2"
+        "from_version": "1.0.3"
     },
-    "signature": "NBgoShuuF66U704DGkKETSqZrr8yYvWVtJEvqkHcosTz3AQZaBwkELnQ1PVsjro8qHbP4gvUYTuesvzXtwC6pqNadckvofEEMx0ikVRBPELIZaquFFbCZoesI30U0HtpxiBuxR7Twwg/ejcZL6rgJdKMhos5QbbhhkrviZLlR//btRM9LNOT2NVyBuzIoDDSmn4klOJkwrRRWRGluFmwg4XjPdrOMMrQK0ft7b9zQUMks+qXmO61jmJFWHKLFAzsS1qY82pW1Ik1V4k+rW7zvu0ZBFiKRal9y7ax60bYJO/i2EgAgeHiYSnqzn/O86yHsMKleiO8+pfh32382ZOfgw=="
+    "signature": "CsHTr2vn/d0W64IRkYKA+gHjXpudBmYwI52tF6p3raqg5YW0hFbOIowECG1iQdDBmN2vBp6wsoVbxpwJ0A68g8a0KPQwYnSQfmH4W/OHHtm4vHtDnxBNYQNEfBWxs9VqKXVdTmZCRTdDJ4/VaeS9B83yBFSwjYm1jlbRSz+oYgVYXh0G/803UHFADaWxUV2z6uBWQ6UKi3ftU0/whSpPULc8PoyNjTz4IIWDrrXnJtYAPJ1aUYxH+OmfBLX1dIoo6l/B1mIpe7dKUK/XT/gAcfEMW9zuIED/aqOHgxrtvfm/D/d/muCnV8i5Q8j2PHjdsKqoBpNzfRD/SE/RRDlPuw=="
 }

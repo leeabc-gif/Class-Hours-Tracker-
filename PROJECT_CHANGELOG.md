@@ -5,8 +5,19 @@
 
 ---
 
+## v1.0.4 · 2026-09-09 · 全选与系统版本同步修复
 
-## v1.0.3 · 2026-09-09 · CNB / GitHub latest URL 解析 + 检查失败可读提示 + 课时记录批量操作
+### 修复
+- 修复「我的课时」表头全选和批量删除读取范围不一致的问题，统一限定在当前课时表格。
+- 更新前端静态资源版本参数，避免浏览器继续使用旧版 `app.js` 缓存。
+- 统一当前已安装版本、代码基线、种子数据和示例重置默认版本为 `1.0.4`。
+- 新增版本同步数据库迁移，历史 `1.0.0`～`1.0.3` 安装记录升级后同步为 `1.0.4`，更高版本不被覆盖。
+- 修复发布流水线中 `upgrade.sql` 在压缩包生成后才复制的问题，确保发布包、SHA256 和数据库迁移内容一致。
+
+### 兼容性
+- 兼容现有 `v1.0.3` 数据库和更新流程。
+- 不覆盖高于 `1.0.4` 的数据库版本记录。
+
 
 ### 修复（patch）
 - **CNB `/-/releases/latest` 解析**：v1.0.2 只识别 `api.github.com/repos/.../releases/latest` 一种入口，CNB 的 `cnb.cool/<owner>/<repo>/-/releases/latest` 拿不到真 manifest（404）。本次新增 `UpdateService::resolveCnbLatest()`：抓 `cnb.cool/<owner>/<repo>/-/releases` 列表页，从 HTML 抓 `vX.Y.Z` 形式的最新 tag，再拼回 `/-/releases/download/<tag>/manifest.json`。GitHub 与 CNB 共用 `resolveManifestEntry()` 链式入口

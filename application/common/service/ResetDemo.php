@@ -183,9 +183,9 @@ class ResetDemo
                     Setting::set($k, $v);
                 }
             }
-            // app_version 兜底回 1.0.2（避免历史脏值卡在线更新对比）
+            // app_version 兜底回当前发布版本，避免历史脏值卡在线更新对比
             if (Setting::get('app_version', '') === '') {
-                Setting::set('app_version', '1.0.2');
+                Setting::set('app_version', '1.0.4');
             }
 
             Db::commit();
