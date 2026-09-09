@@ -18,8 +18,8 @@ return [
     'app_name'               => '',
     // 应用地址
     'app_host'               => '',
-    // 系统版本号（在线更新用；运行期以 ks_setting.app_version 为“当前已装版本”，config 值为出厂/兜底基线）
-    'version'                => '1.0.7',
+    // 系统版本号（在线更新用；运行期以 ks_setting.app_version 为"当前已装版本"，config 值为出厂/兜底基线）
+    'version'                => '1.0.8',
     // 应用调试模式
     'app_debug'              => false,
     // 应用Trace

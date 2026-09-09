@@ -440,7 +440,13 @@
   App.curTerm = curTerm;
   App.termName = (id) => { const t = (App.boot.terms||[]).find(x => x.id === id); return t ? t.name : ('学期#' + id); };
 
-  const SEC = { 1:'1-4节',2:'5-8节',3:'1-2节',4:'2-4节',5:'5-6节',6:'5-8节' };
+  // 节次选项（下标即 section 值）
+  // 1..6 = 常规两节连排；7..10 = 跨节组合（上午/下午/全天/分组等场景）
+  const SEC = {
+    1:'1-2节', 2:'3-4节', 3:'5-6节', 4:'7-8节', 5:'9-10节', 6:'11-12节',
+    7:'1-4节', 8:'2-4节', 9:'5-8节', 10:'1-8节'
+  };
+  const MAX_SECTION = 10;
   const WD = { 1:'周一',2:'周二',3:'周三',4:'周四',5:'周五',6:'周六',7:'周日' };
   const TYPES = { normal:'常规课', makeup:'补课', swap:'调课', training:'实训课' };
 
@@ -670,7 +676,7 @@
     const weekdayOpts = '<option value="">全部星期</option>'
       + [1,2,3,4,5,6,7].map(k => '<option value="' + k + '">' + App.enumWeekday(k) + '</option>').join('');
     const sectionOpts = '<option value="">全部节次</option>'
-      + [1,2,3,4,5,6].map(k => '<option value="' + k + '">' + App.enumSection(k) + '</option>').join('');
+      + Array.from({length: MAX_SECTION}, (_, i) => i + 1).map(k => '<option value="' + k + '">' + App.enumSection(k) + '</option>').join('');
     return '<div class="filters" id="myFilters">'
       + '<select id="my-term" class="form-select" style="width:auto;max-width:230px" onchange="KS.refreshLessons()">' + termOpts + '</select>'
       + '<select id="my-course" class="form-select" style="width:auto" onchange="KS.refreshLessons()">' + cOpts + '</select>'
@@ -1488,7 +1494,7 @@
     });
   }
   function fillWeekdaySel(sel, val){ sel.innerHTML=''; for(let i=1;i<=7;i++){const o=document.createElement('option');o.value=i;o.textContent=WD[i];if(i==val)o.selected=true;sel.appendChild(o);} }
-  function fillSectionSel(sel, val){ sel.innerHTML=''; for(let i=1;i<=6;i++){const o=document.createElement('option');o.value=i;o.textContent=SEC[i];if(i==val)o.selected=true;sel.appendChild(o);} }
+  function fillSectionSel(sel, val){ sel.innerHTML=''; for(let i=1;i<=MAX_SECTION;i++){const o=document.createElement('option');o.value=i;o.textContent=SEC[i];if(i==val)o.selected=true;sel.appendChild(o);} }
   App.pickCourse = function(raw){
     // raw 形如 fav_<id> / all_<id> / __custom__ / ''
     if (!raw) return;

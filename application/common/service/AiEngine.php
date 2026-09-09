@@ -20,8 +20,26 @@ use app\common\service\AiConfig;
  */
 class AiEngine
 {
-    /** 节次起始节 → section 值 */
-    const SECTION_MAP = [1 => 1, 3 => 2, 5 => 3, 7 => 4, 9 => 5, 11 => 6];
+    /**
+     * 节次区间 → section 值
+     * 键是 "起始节-结束节" 字符串，值是 Lesson::SECTIONS 中的索引。
+     * 同步 SECTIONS 新增的 1-4节/2-4节/5-8节/1-8节。
+     */
+    const SECTION_MAP = [
+        '1-2'  => 1,
+        '3-4'  => 2,
+        '5-6'  => 3,
+        '7-8'  => 4,
+        '9-10' => 5,
+        '11-12'=> 6,
+        '1-4'  => 7,
+        '2-4'  => 8,
+        '5-8'  => 9,
+        '1-8'  => 10,
+    ];
+
+    /** 节次起始节 → section 值（兼容旧版只填起始节的文本，如 "1-2节"） */
+    const SECTION_START_MAP = [1 => 1, 3 => 2, 5 => 3, 7 => 4, 9 => 5, 11 => 6];
 
     /** 中文星期 → 数字 */
     const WEEKDAY_MAP = [
@@ -248,17 +266,19 @@ class AiEngine
     {
         $orig = $line;
 
-        // --- 节次：1-2节 / 3-4节 ... ---
+        // --- 节次：1-2节 / 1-4节 / 5-8节 / 1-8节 ...
+        // 优先按 "起-止" 区间整体匹配（支持跨节组合），找不到再退回"起始节"映射。
         $section = null; $periods = 2;
         if (preg_match('/(\d{1,2})\s*[-~－—]\s*(\d{1,2})\s*节/u', $line, $m)) {
             $start = intval($m[1]);
             $end   = intval($m[2]);
-            if (isset(self::SECTION_MAP[$start]) && $end == $start + 1) {
-                $section = self::SECTION_MAP[$start];
+            $key   = $start . '-' . $end;
+            if (isset(self::SECTION_MAP[$key])) {
+                $section = self::SECTION_MAP[$key];
                 $periods = $end - $start + 1;
-            } else {
-                // 非常规节次（如 1-3节），也尝试映射
-                $section = isset(self::SECTION_MAP[$start]) ? self::SECTION_MAP[$start] : null;
+            } elseif (isset(self::SECTION_START_MAP[$start])) {
+                // 兜底：识别到常见起始节，按传统 1-2 节制记录；periods 仍按实际区间算
+                $section = self::SECTION_START_MAP[$start];
                 $periods = max(1, $end - $start + 1);
             }
             $line = str_replace($m[0], ' ', $line);

@@ -576,7 +576,7 @@ class Lesson extends Base
         }
 
         $section = intval(isset($data['section']) ? $data['section'] : 0);
-        if ($section < 1 || $section > 6) {
+        if ($section < 1 || $section > LessonModel::SECTION_MAX) {
             return '请选择上课节次';
         }
 
