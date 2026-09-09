@@ -863,11 +863,11 @@ class Admin extends Base
     }
 
     /**
-     * CNB 官方 Release 默认 URL（v1.0.1 起的官方发布通道，仅作兼容保留）
+     * CNB 官方 Release 默认 URL（v1.0.8 起直接指向 tag manifest，避免 latest/download 在 is_latest=false 时 404）
      */
     public static function defaultCnbManifestUrl()
     {
-        return 'https://cnb.cool/bmayan/class-hours-tracker/-/releases/latest/download/manifest.json';
+        return 'https://cnb.cool/bmayan/class-hours-tracker/-/releases/download/v1.0.8/manifest.json';
     }
 
     /**

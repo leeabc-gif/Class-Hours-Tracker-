@@ -1,19 +1,19 @@
 {
     "latest_version": "1.0.8",
     "min_php": "7.4",
-    "published_at": "2026-09-09T13:22:52+00:00",
+    "published_at": "2026-09-09T13:30:55+00:00",
     "changelog": "### 新增\n- **节次选项扩展**：在原有 6 项（1-2 / 3-4 / 5-6 / 7-8 / 9-10 / 11-12 节）的基础上新增 4 项跨节组合 `1-4节 / 2-4节 / 5-8节 / 1-8节`，section 编号 7..10。覆盖上午四节连排、下午四节连排、全天 8 节连排等常见课表编排。\n- 前端 `app.js` 改为按 `MAX_SECTION=10` 常量循环渲染，列表/筛选/新建/编辑/批量 4 处下拉框一次性同步；`index.html` 缓存戳升至 `?v=20260909f` 防命中旧缓存。\n- 后端 `Lesson::SECTIONS` 增加 4 项；`Lesson::SECTION_MAX = 10` 常量集中维护；`LessonController` 的 `section > 6` 硬上限改为读取 `SECTION_MAX`，避免再因增减节次产生遗漏。\n- AI 解析引擎 `AiEngine::SECTION_MAP` 改为按\"起-止区间\"整体匹配（键如 `\"1-4\"`、`\"5-8\"`、`\"1-8\"`），新增 4 个区间一目了然；旧的\"只按起始节\"映射降级为兜底，向后兼容所有历史粘贴文本。\n\n### 数据库\n- 无 schema 变更；新增迁移 `20260909_v108_version_sync.sql` 仅同步 `ks_setting.app_version` 为 `1.0.8`。\n\n\n\n### 修复\n- **在线更新始终失败（核心）**：发布清单 `manifest.json` 记录的 `sha256`/`size` 与实际发布包不一致，导致下载后校验必然失败、升级中止。本次重新按统一规则打包并重新签名，保证清单与包严格对应。\n- **升级后版本号不推进**：CI 在准备 `upgrade.sql` 时未正确取到当前版本（GitHub 侧缺少 `VER` 变量、CNB 侧硬编码 `v1.0.5`），任何版本都打包 `v1.0.5` 的迁移，导致升级后版本号被写成 `1.0.5`、反复提示可更新。现改为优先精确匹配当前版本迁移，退路取最大版本。\n- **升级 SQL 执行报错**：`ks_setting` 表没有 `updated_at` 字段，但 `v1.0.5`/`v1.0.6` 迁移在写该列，执行时报 `Unknown column` 使升级回滚。已移除该赋值。\n- **发布清单 changelog 恒为空**：签名工具 `--changelog-file=` 参数偏移多算 1 位导致路径首字符被截、文件读不到；且 CHANGELOG 首行带 UTF-8 BOM 时正则匹配不到版本标题。均已修复。\n- **发布包残缺**：手工打包时只纳入了改动过的 8 个文件，跨版本升级/全新安装会缺文件。新增 `tools/build_release.php` 统一打包 300 个文件。\n\n### 新增\n- `tools/build_release.php`：与 CI 同一套白/黑名单的发布包构建工具，自动挑选当前版本 `upgrade.sql` 并输出 `sha256` 供签名。\n- 签名工具参数解析改为统一 `--key=value` 解析，避免手写字符串偏移再次出错。",
     "files": [
         {
             "name": "keshi-1.0.8.zip",
             "url": "https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/v1.0.8/keshi-1.0.8.zip",
-            "sha256": "670d563a1443f0589b28898f20a843dedeabf75854217c4e2545bf8f6743f411",
+            "sha256": "ad5741a62ef9b892940a0be17664251962b36c6917f41018f56d4a14c4fe33e9",
             "version": "1.0.8",
-            "size": 677978
+            "size": 678561
         }
     ],
     "requires": {
         "from_version": "1.0.0"
     },
-    "signature": "C2vgwDGX+9KCkeflucBTPYTYpXH8Eg7aJn6xPMUcl5icgMWX/fIr5on8VPNmHMhDl+BKV57sAqHRD0hvY7AJQMEao8PnZOMIM3T0wFJJczc0yBpJfOwOg/LwTqUtpNYGVhCB6pR3MAontonxhTb17CcyV6pqaJJIIIYiCahrA7rqv0sUND3ojY6hbKOWv/8yw4hSX71dzFwt13DPTtUyGtnXlheyUQOx21Hl4urtDZhUBGEoh+7IcMokAcSNEBL5QHprpngIN8VkkTySIx6pXLb77j4sAM3vkW70B5MrHPtuA4EXbJ7iVoGcdNLVvk+Tc8nA++R1OGPK9U7M3IaCtQ=="
+    "signature": "m2g9SypbvwkkNdjp+CZcPsLSswG1wmoADGA5h4WZlJqWmG5PPZLEblsICofs2pJ64m3esKlNYVAa9ZZWRkdnG1aKj2L9WlW7XbCw0+Ke/PLM7IDlyhUc8X14FW6FCH9ETGGZdnsOUA/fEF245q0T/WDD2NBhzwglZ8yNM9L4FuHLobWmoP4mMgedSRmNr0uhFktulEmrvNgURy6tgU+5ttvqmnbIggwPL1mWyvSw6ajaCeWHl6HHP7iaXar/UtxHp9hYUCBpMq6vDLNy0Xwc+cHFD/uCe3HovtJHRr+5SYymIlzP+bbVw2aI/i9c8iHsO2G9H2d7FAJbfYy6NX/b7w=="
 }
