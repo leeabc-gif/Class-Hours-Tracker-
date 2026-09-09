@@ -162,6 +162,74 @@ php tools/sign_manifest.php \
 
 ---
 
+## 10. 发布者侧：CI 私钥 + 自托管更新源
+
+### 10.1 在 GitHub 配置 manifest 签名私钥
+
+`.github/workflows/release.yml` 会在每次推送 `v*` tag 时调用 `tools/sign_manifest.php`，
+需要把 RSA **私钥**以 Secret 形式注入到 CI。
+
+1. 仓库根目录（发布端）执行：
+   ```bash
+   # 生成新密钥对（或使用 _env/ks_update_priv.pem）
+   openssl genrsa -out _env/ks_update_priv.pem 2048
+   openssl rsa -in _env/ks_update_priv.pem -pubout -out _env/ks_update_pub.pem
+
+   # 公钥替换 config/update_trust.php 的 public_key（PEM 文本，含头尾标记）
+   # 私钥准备好给 CI 用
+   ```
+2. GitHub 仓库 → **Settings → Secrets and variables → Actions** → **New repository secret**
+   - Name：`MANIFEST_PRIVATE_KEY`
+   - Value：把 `_env/ks_update_priv.pem` 文件**完整文本**（含 `-----BEGIN/END-----` 头尾）粘贴进去
+3. CNB 仓库（如使用）→ **Settings → Secrets** → 同样添加 `MANIFEST_PRIVATE_KEY`（CNB 的 release 任务也读它）
+4. 推送 `v*` tag → CI 跑签 → manifest.json 自动随 zip 上传为 Release 资产
+
+> 私钥一旦泄露，立即生成新密钥对并轮换 `config/update_trust.php` 公钥。
+> 详见 `config/update_trust.php` 文件头注释。
+
+### 10.2 跨私钥升级说明（v1.0.1 → v1.0.2）
+
+由于历史 v1.0.1 私钥已遗失，v1.0.2 使用新密钥对。
+
+- **已部署 v1.0.1 的站点**走"检查更新"会因旧 manifest 验签失败而拒绝 — 这是预期行为
+- **升级方式**：下载 `keshi-1.0.2.zip` 直接覆盖源码，或在「基础配置」临时把
+  `app_version` 改成 `1.0.2` 后走本地更新
+- 升级完成后 `config/update_trust.php` 公钥自动同步为新值，**后续 v1.0.2+ 在线更新照常**
+
+### 10.3 完全自托管更新源
+
+如果不想用 GitHub Releases / CNB，可在自己服务器上架一个静态更新源：
+
+```
+# 自托管根目录结构
+https://update.example.com/keshi/
+├── manifest.json          # 必填，已签名
+├── keshi-1.0.2.zip        # 必填，代码包
+└── upgrade.sql            # 选填，跨版本迁移
+```
+
+- `manifest.json` 用 `tools/sign_manifest.php` 生成：
+  ```bash
+  php tools/sign_manifest.php \
+    --version=1.0.2 \
+    --tag=v1.0.2 \
+    --package=./keshi-1.0.2.zip \
+    --private-key=./ks_update_priv.pem \
+    --changelog-file=./CHANGELOG.md \
+    --out=./manifest.json
+  ```
+- 「基础配置」→ 更新源选 `custom`，清单地址填 `https://update.example.com/keshi/manifest.json`
+- 客户端走 `https` 强校验 + 验签 + SHA256，链路与 GitHub 源完全一致
+
+### 10.4 日常自检 checklist
+
+- [ ] `_env/ks_update_priv.pem` 已脱机保存（备份到 1Password / 加密 U 盘）
+- [ ] GitHub `MANIFEST_PRIVATE_KEY` Secret 已配置且**不**过期
+- [ ] `config/update_trust.php` 的公钥是当前生效密钥对的公钥部分
+- [ ] 升新版本前：先跑 `php tools/sign_manifest.php` 本地签一次 + 用 `openssl verify` 自验
+
+---
+
 ## 6. 一键重置示例数据（v1.0.2+）
 
 适用于：
