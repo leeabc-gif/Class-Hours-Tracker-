@@ -963,6 +963,108 @@
   App.lessonPage = function (n) { lessonPageNo = n; loadLessons(); return false; };
   App.refreshLessons = function () { lessonPageNo = 1; loadLessons(); };
 
+  // ---------- 我的课时记录：复选框批量选择 / 批量删除 ----------
+  /**
+   * 刷新 "已选 N 条" + 启用/禁用批量删除按钮 + 同步全选框三态
+   * 由 onchange / 翻页 / 重渲后调用
+   */
+  App.updateCheckState = function () {
+    const checks = document.querySelectorAll('.lesson-row-check');
+    const sel = [];
+    checks.forEach(c => { if (c.checked) sel.push(c.value); });
+    const info = $('#lessonCheckedInfo');
+    if (info) info.textContent = '已选 ' + sel.length + ' 条';
+    const btn = $('#lessonBatchDelBtn');
+    if (btn) btn.disabled = sel.length === 0;
+    const ca = $('#lessonCheckAll');
+    if (ca) {
+      if (checks.length === 0) { ca.checked = false; ca.indeterminate = false; return; }
+      const checkedCount = sel.length;
+      ca.checked = checkedCount === checks.length;
+      ca.indeterminate = checkedCount > 0 && checkedCount < checks.length;
+    }
+  };
+
+  /**
+   * 表头全选框点击：把当前页所有行设为相同 checked
+   * 注意：只对"当前页"生效（避免翻页后误选其他页），
+   * 后端 batchDelete 会用 ids 全量校验，不在前端的页/全集合里糊弄
+   */
+  App.toggleCheckAll = function (cb) {
+    const checks = document.querySelectorAll('.lesson-row-check');
+    checks.forEach(c => { c.checked = cb.checked; });
+    App.updateCheckState();
+  };
+
+  /**
+   * "删除选中" 按钮：勾选模式批量软删除
+   */
+  App.lessonBatchDelete = function (mode) {
+    if (mode === 'all') return App.lessonBatchByQuery('delete');
+    const checks = document.querySelectorAll('.lesson-row-check:checked');
+    if (checks.length === 0) { toast('请先勾选要删除的记录', 'warn'); return; }
+    if (checks.length > 500) { toast('单次最多删除 500 条', 'warn'); return; }
+    const ids = Array.from(checks).map(c => parseInt(c.value, 10)).filter(n => n > 0);
+    if (ids.length === 0) { toast('所选记录 id 无效', 'warn'); return; }
+    if (!confirm('确认删除已选 ' + ids.length + ' 条课时记录？\n（软删除，可在「回收站」恢复）')) return;
+    (async () => {
+      try {
+        const res = await POST('/api/lesson/batchDelete', { ids, mode: 'ids', note: '' });
+        if (res.code === 0) {
+          toast('已删除 ' + (res.data?.deleted ?? ids.length) + ' 条');
+          // 清掉全选 + 刷新
+          const ca = $('#lessonCheckAll'); if (ca) ca.checked = false;
+          loadLessons();
+        } else {
+          toast(res.msg || '删除失败', 'err');
+        }
+      } catch (e) {
+        toast('网络错误：' + (e.message || e), 'err');
+      }
+    })();
+  };
+
+  /**
+   * "一键删除当前查询" 按钮：按当前筛选条件批量删除
+   * action='delete' 软删 / action='restore' 恢复
+   */
+  App.lessonBatchByQuery = function (action) {
+    const q = buildLessonQuery() || {};
+    if (!q.term_id) { toast('请先选择学期（必填筛选条件，避免误删整库）', 'warn'); return; }
+    const filtered = Object.assign({}, q); delete filtered.term_id;
+    const extraKeys = Object.keys(filtered);
+    if (extraKeys.length === 0) { toast('除学期外必须再加至少 1 个筛选条件（教师/课程/月份/周/星期…），防止误操作全学期', 'warn'); return; }
+    const summary = '当前筛选：' + (() => {
+      const lbls = [];
+      if (q.type)      lbls.push('类型=' + q.type);
+      if (q.course_id) lbls.push('课程ID=' + q.course_id);
+      if (q.week)      lbls.push('第' + q.week + '周');
+      if (q.weekday)   lbls.push('星期' + q.weekday);
+      if (q.section)   lbls.push('节次=' + q.section);
+      if (q.month)     lbls.push('月份=' + q.month);
+      if (q.keyword)   lbls.push('关键词=' + q.keyword);
+      if (q.start_date && q.end_date) lbls.push(q.start_date + '~' + q.end_date);
+      return lbls.join('，') || '(仅学期)';
+    })();
+    const verb = action === 'restore' ? '恢复' : '删除';
+    if (!confirm('确认' + verb + '当前筛选下的所有课时？\n' + summary + '\n（软' + verb + '，可在「回收站」反悔）')) return;
+    const api = action === 'restore' ? '/api/lesson/batchRestore' : '/api/lesson/batchDelete';
+    (async () => {
+      try {
+        const payload = Object.assign({ mode: 'all', note: '' }, q);
+        const res = await POST(api, payload);
+        if (res.code === 0) {
+          toast('已' + verb + ' ' + (res.data?.deleted ?? 0) + ' 条');
+          loadLessons();
+        } else {
+          toast(res.msg || (verb + '失败'), 'err');
+        }
+      } catch (e) {
+        toast('网络错误：' + (e.message || e), 'err');
+      }
+    })();
+  };
+
   // ============ 我的课程 ============
   ROUTERS['my-courses'] = function (host) {
     host.innerHTML = '<div class="card"><div class="card-h"><i class="bi bi-book text-primary"></i><span class="tt">我的课程</span>'
