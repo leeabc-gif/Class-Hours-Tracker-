@@ -1,19 +1,19 @@
 {
-    "latest_version": "1.0.4",
+    "latest_version": "1.0.6",
     "min_php": "7.4",
-    "published_at": "2026-09-09T05:06:27+00:00",
-    "changelog": "### v1.0.4 修复\n- 修复课时列表全选和批量删除范围不一致\n- 同步系统已安装版本与代码基线\n- 新增版本同步迁移并修正发布包升级 SQL 打包顺序",
+    "published_at": "2026-09-09T06:16:28+00:00",
+    "changelog": "修复节次选项，并将课时列表中的班级 ID 显示为班级名称。",
     "files": [
         {
-            "name": "keshi-1.0.4.zip",
-            "url": "https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/v1.0.4/keshi-1.0.4.zip",
-            "sha256": "e07e99011ab7fb6f81e3791117ebc62bab34b35f11011ea0ac2ca32e358d2bef",
-            "version": "1.0.4",
-            "size": 657818
+            "name": "keshi-1.0.6.zip",
+            "url": "https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/v1.0.6/keshi-1.0.6.zip",
+            "sha256": "0bd875c1e9de13d49ea550ece9b519d42ff9e8a119071a53e26eeda72bdf893a",
+            "version": "1.0.6",
+            "size": 607038
         }
     ],
     "requires": {
-        "from_version": "1.0.3"
+        "from_version": "1.0.5"
     },
-    "signature": "CsHTr2vn/d0W64IRkYKA+gHjXpudBmYwI52tF6p3raqg5YW0hFbOIowECG1iQdDBmN2vBp6wsoVbxpwJ0A68g8a0KPQwYnSQfmH4W/OHHtm4vHtDnxBNYQNEfBWxs9VqKXVdTmZCRTdDJ4/VaeS9B83yBFSwjYm1jlbRSz+oYgVYXh0G/803UHFADaWxUV2z6uBWQ6UKi3ftU0/whSpPULc8PoyNjTz4IIWDrrXnJtYAPJ1aUYxH+OmfBLX1dIoo6l/B1mIpe7dKUK/XT/gAcfEMW9zuIED/aqOHgxrtvfm/D/d/muCnV8i5Q8j2PHjdsKqoBpNzfRD/SE/RRDlPuw=="
+    "signature": "j9oYJoWpqLIg6d4z7xxJH9Z9dwEzznb9TtTYteL4d0myko4rWU4RHz6RYn0wQ54IBbV621meheUVTW/v60cqDULqZmdTrB4fyVZhksYCrxl0JUZqyE6mma7OMeSIvWxy4PpLv6I65LMN34pjVqTGZqK+nauTlyQ8mIRogRfve6m2rWhA5J/1Fkb7lP/IwxYjGaMRBx5vH6rqL9dQqhe17Er5QhZLryHslG2TaUPMequWC7ZwrecLvpfh9kFFLuDQ9aDPejWuvHiUhVV7lhy/Th/Ur/ffvvlvI3KFlf6wGeopTjk7Z5IpU03whnd++cH1y7k0tVc0bl5mB8eMWYVKmQ=="
 }

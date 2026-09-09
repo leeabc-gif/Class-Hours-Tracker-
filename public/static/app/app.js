@@ -440,11 +440,22 @@
   App.curTerm = curTerm;
   App.termName = (id) => { const t = (App.boot.terms||[]).find(x => x.id === id); return t ? t.name : ('学期#' + id); };
 
-  const SEC = { 1:'1-2节',2:'3-4节',3:'5-6节',4:'7-8节',5:'9-10节',6:'11-12节' };
+  const SEC = { 1:'1-4节',2:'5-8节',3:'1-2节',4:'2-4节',5:'5-6节',6:'5-8节' };
   const WD = { 1:'周一',2:'周二',3:'周三',4:'周四',5:'周五',6:'周六',7:'周日' };
   const TYPES = { normal:'常规课', makeup:'补课', swap:'调课', training:'实训课' };
 
+  function classNames(csv) {
+    const all = (App.boot && App.boot.classes) || [];
+    const map = new Map(all.map(c => [String(c.id), String(c.name || '')]));
+    return String(csv == null ? '' : csv)
+      .split(/[,,，、\s]+/)
+      .filter(Boolean)
+      .map(v => map.get(String(v)) || v)
+      .join('、');
+  }
+
   App.enumSection = (i) => SEC[i] || ('节次' + i);
+  App.classNames = classNames;
   App.enumWeekday = (i) => WD[i] || '';
   App.enumTypeText = (t) => TYPES[t] || t;
   App.typeBadgeClass = (t) => ({ normal:'bg-primary', makeup:'bg-warning text-dark', swap:'bg-purple', training:'bg-success' }[t] || 'bg-secondary');
@@ -939,7 +950,7 @@
           + '<td><input type="checkbox" class="lesson-row-check" value="' + l.id + '" onchange="KS.updateCheckState()"></td>'
           + '<td>第' + l.week + '周</td><td>' + App.enumWeekday(l.weekday) + '</td><td>' + App.enumSection(l.section) + '</td>'
           + '<td><b>' + esc(l.course_name) + '</b>' + (l.teacher_name ? '<div class="small text-muted">' + esc(l.teacher_name) + '</div>' : '') + '</td>'
-          + '<td class="small">' + esc(l.classes) + '</td>'
+          + '<td class="small">' + esc(App.classNames(l.classes)) + '</td>'
           + '<td><span class="badge ' + App.typeBadgeClass(l.type) + '">' + App.enumTypeText(l.type) + '</span></td>'
           + '<td>' + l.periods + '</td>'
           + '<td class="text-end" style="font-weight:600;color:#059669">¥' + fmtMoney(l.amount) + '</td>'
