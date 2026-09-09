@@ -51,6 +51,13 @@
 
 ## 📦 最近更新
 
+**2026-09（v1.0.4）· 全选修复与系统版本同步**
+
+- ✅ **课时列表全选修复**：表头全选、反选和批量删除统一限定在当前课时表格，修复点击全选后选择状态不完整或范围错误的问题
+- 🧹 **前端缓存刷新**：更新静态资源版本参数，避免浏览器继续加载旧版 `app.js`
+- 🔢 **系统版本统一**：代码基线、数据库种子数据、示例数据重置和已安装版本统一使用 `1.0.4`
+- 🗄️ **在线升级兼容**：新增版本同步迁移，兼容 `1.0.0`～`1.0.3` 的历史安装记录；发布包包含根目录 `upgrade.sql`
+
 **2026-09（v1.0.3）· CNB / GitHub latest URL 解析 + 检查失败可读提示 + 课时记录批量操作**
 
 - 🔧 **CNB `/-/releases/latest` 解析**：v1.0.2 只识别 GitHub 的 `api.github.com/repos/.../releases/latest` 一种入口，CNB 的 `cnb.cool/<owner>/<repo>/-/releases/latest` 拿不到真 manifest（404）。新增 `UpdateService::resolveCnbLatest()`：抓 CNB releases 列表页，从 HTML 抓 `vX.Y.Z` 形式的最新 tag，再拼回 `/-/releases/download/<tag>/manifest.json`；GitHub 与 CNB 共用 `resolveManifestEntry()` 链式入口
@@ -211,6 +218,13 @@ In Chinese vocational (中职) schools, teacher class-period (课时) and payrol
 - 📱 **Responsive UI**: Bootstrap 5 + Chart.js — works on desktop and mobile
 
 ## 🆕 Recent Updates
+
+**2026-09 (v1.0.4) — Select-all fix and system-version synchronization**
+
+- ✅ **Fixed lesson-list select all**: header select-all, invert selection, and bulk deletion are now scoped to the current lesson table, fixing incomplete or incorrect selection ranges
+- 🧹 **Frontend cache refresh**: bumped the static asset version so browsers do not keep loading an outdated `app.js`
+- 🔢 **Unified system version**: code baseline, database seed, demo reset, and installed-version fallback now consistently use `1.0.4`
+- 🗄️ **Online-update compatibility**: added a version-sync migration for existing `1.0.0`–`1.0.3` installations; release packages include the root-level `upgrade.sql`
 
 **2026-09 (v1.0.3) — CNB / GitHub latest URL resolver + readable check-failure + batch lesson ops**
 
