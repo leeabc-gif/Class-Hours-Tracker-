@@ -30,9 +30,11 @@ INSERT IGNORE INTO `ks_setting` (`cfg_key`, `cfg_value`, `remark`) VALUES
 -- 老用户兼容：之前是空值或没切过源的，把 update_source 设为 github
 UPDATE `ks_setting` SET `cfg_value`='github' WHERE `cfg_key`='update_source' AND (`cfg_value`='' OR `cfg_value` IS NULL);
 
--- 4) 默认 manifest URL 改到 GitHub Releases（仅当未自定义过）
+-- 4) 默认 manifest URL 改到 GitHub Releases 公开 REST API（仅当未自定义过）
+--    UpdateService::check 会先 GET 该 API 拿 tag_name，再去
+--    https://github.com/.../releases/download/<tag>/manifest.json 拉真正的 manifest
 UPDATE `ks_setting`
-   SET `cfg_value` = 'https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/latest/download/manifest.json',
-       `remark`    = '在线更新清单地址，默认指向 GitHub Releases；管理员可在「基础配置」覆盖'
+   SET `cfg_value` = 'https://api.github.com/repos/leeabc-gif/Class-Hours-Tracker-/releases/latest',
+       `remark`    = '在线更新清单地址，默认指向 GitHub latest release API；管理员可在「基础配置」覆盖'
  WHERE `cfg_key` = 'update_manifest_url'
    AND (`cfg_value` = '' OR `cfg_value` IS NULL);

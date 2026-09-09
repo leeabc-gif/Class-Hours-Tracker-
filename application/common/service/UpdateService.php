@@ -75,12 +75,20 @@ class UpdateService
 
     /**
      * 读取远程 manifest 并对比本地版本
+     *
+     * v1.0.2+：支持 GitHub Releases 模式
+     *   manifest URL 形如 https://api.github.com/repos/<owner>/<repo>/releases/latest
+     *   时，先调该 API 拿 tag_name，再去拉
+     *     https://github.com/<owner>/<repo>/releases/download/<tag>/manifest.json
+     *   公开仓库匿名即可访问（60/h/IP），配 Token 后到 5000/h。
+     *
      * @return array
      */
     public static function check($manifestUrl)
     {
-        $url  = self::validateRemoteUrl($manifestUrl, '更新清单地址');
-        $json = self::httpGet($url, self::MANIFEST_MAX, '更新清单');
+        $manifestUrl = self::validateRemoteUrl($manifestUrl, '更新清单地址');
+        list($manifestUrl, $resolvedTag) = self::resolveGithubLatest($manifestUrl);
+        $json = self::httpGet($manifestUrl, self::MANIFEST_MAX, '更新清单');
         $data = json_decode($json, true);
         if (!is_array($data) || empty($data['latest_version'])) {
             throw new \RuntimeException('更新清单格式不正确：缺少 latest_version。');
@@ -108,7 +116,45 @@ class UpdateService
             'published_at'     => isset($data['published_at']) ? (string) $data['published_at'] : '',
             'files'            => $files,
             'checked_at'       => date('Y-m-d H:i:s'),
+            'source'           => $resolvedTag !== '' ? 'github:'.$resolvedTag : 'custom',
         ];
+    }
+
+    /**
+     * 识别 "GitHub latest release" 入口 URL，自动解析出真正的 manifest URL。
+     * - https://api.github.com/repos/<owner>/<repo>/releases/latest
+     *   → 先 GET 该 API 拿 tag_name，再返回
+     *     https://github.com/<owner>/<repo>/releases/download/<tag>/manifest.json
+     * - 其他 URL 原样返回
+     *
+     * 返回 [最终 manifest URL, 解析出的 tag 或 '']
+     */
+    public static function resolveGithubLatest($manifestUrl)
+    {
+        $manifestUrl = trim((string) $manifestUrl);
+        if (stripos($manifestUrl, 'https://api.github.com/repos/') !== 0) {
+            return [$manifestUrl, ''];
+        }
+        // 形如 https://api.github.com/repos/<owner>/<repo>/releases/latest
+        if (!preg_match('#^https://api\.github\.com/repos/([^/]+)/([^/]+)/releases/latest/?$#i', $manifestUrl, $m)) {
+            return [$manifestUrl, ''];
+        }
+        $owner = $m[1];
+        $repo  = $m[2];
+        // 拉 GitHub API 拿 tag_name（公开仓库匿名 60/h，配 Token 后 5000/h）
+        $apiJson = self::httpGet($manifestUrl, 65536, 'GitHub latest release API');
+        $api = json_decode($apiJson, true);
+        if (!is_array($api) || empty($api['tag_name'])) {
+            throw new \RuntimeException('GitHub latest release API 返回格式异常：缺少 tag_name。');
+        }
+        $tag = (string) $api['tag_name'];
+        if (!preg_match('#^[A-Za-z0-9._-]+$#', $tag)) {
+            throw new \RuntimeException('GitHub 返回的 tag_name 含非法字符，拒绝继续。');
+        }
+        $realUrl = "https://github.com/{$owner}/{$repo}/releases/download/{$tag}/manifest.json";
+        // 走严格 SSRF 校验
+        $realUrl = self::validateRemoteUrl($realUrl, '更新清单地址');
+        return [$realUrl, $tag];
     }
 
     /**
@@ -827,10 +873,15 @@ class UpdateService
             'Accept: application/json, application/octet-stream, */*',
             'X-Keshi-Updater: 1',
         ];
+        // GitHub REST API 必须带 vnd.github+json Accept，否则会返回 HTML 渲染页（404 时也返 HTML）
+        if (stripos($url, 'api.github.com/') !== false) {
+            $headers[] = 'Accept: application/vnd.github+json';
+            $headers[] = 'X-GitHub-Api-Version: 2022-11-28';
+            $headers[] = 'User-Agent: keshi-updater/1.0.2';
+        }
         // v1.0.2+：管理员在「基础配置」填的 GitHub PAT 会通过 setBearerToken 注入
         if (self::$bearerToken !== '') {
             $headers[] = 'Authorization: Bearer ' . self::$bearerToken;
-            // GitHub API 建议带 UA，否则会被限流
         }
         curl_setopt_array($ch, [
             CURLOPT_URL            => $url,

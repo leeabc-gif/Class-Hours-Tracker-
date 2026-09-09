@@ -11,7 +11,7 @@
 ### 新功能（minor）
 - **GitHub Releases 作为默认更新源**：
   - 「基础配置 → 在线更新源」下拉：github（默认）/ cnb（v1.0.1 兼容）/ custom
-  - 默认清单 URL：https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/latest/download/manifest.json
+  - 默认清单 URL：https://api.github.com/repos/leeabc-gif/Class-Hours-Tracker-/releases/latest（UpdateService 自动解析 tag_name，再拉 `github.com/.../releases/download/<tag>/manifest.json`）
   - 新配置 `update_github_token`（不回显明文），私有仓库或限流时填写
   - `UpdateService::httpGet` 自动注入 `Authorization: Bearer ...`
   - 401/403/404/429 返回更具体的错误提示

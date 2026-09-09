@@ -53,7 +53,7 @@
 
 **2026-09（v1.0.2）· GitHub Releases 更新源 + 一键重置示例数据**
 
-- 🐙 **默认走 GitHub Releases**：「基础配置 → 在线更新源」新增 `github / cnb / custom` 三选一下拉，**默认**指向 `github.com/leeabc-gif/Class-Hours-Tracker-/releases/latest/download/manifest.json`；配套 `.github/workflows/release.yml`，**推送 `v*` tag 时自动构建** `release/keshi-<ver>.zip` + `release/manifest.json`（用 `tools/sign_manifest.php` 走 RSA-SHA256 签名），并以 GitHub Actions 的 `softprops/action-gh-release@v2` 发布为 Release 资产
+- 🐙 **默认走 GitHub Releases**：「基础配置 → 在线更新源」新增 `github / cnb / custom` 三选一下拉，**默认**指向 `api.github.com/repos/leeabc-gif/Class-Hours-Tracker-/releases/latest`（UpdateService 自动拉 API 拿 `tag_name`，再拼 `github.com/.../releases/download/<tag>/manifest.json` 拉真正的 manifest）；配套 `.github/workflows/release.yml`，**推送 `v*` tag 时自动构建** `release/keshi-<ver>.zip` + `release/manifest.json`（用 `tools/sign_manifest.php` 走 RSA-SHA256 签名），并以 GitHub Actions 的 `softprops/action-gh-release@v2` 发布为 Release 资产
 - 🔑 **GitHub Token 字段**：`update_github_token` 配置（不回显明文，公开仓库可空），`UpdateService::httpGet` 自动注入 `Authorization: Bearer ...` 头；针对 401/403/404/429 给出更清晰的错误提示（私有仓库 / 限流 / 资产名错配）
 - 🛡️ **降级兼容**：`cnb` 源（v1.0.1 的 CNB 通道）作为兜底保留，管理员随时可在「基础配置」切换；`custom` 选项允许指向自建对象存储或 Gitee raw
 - 🧹 **签名工具升级**：`tools/sign_manifest.php` 新增 CI 模式（`--version --package --private-key --changelog-file --out`），GitHub Actions 一行命令直接产出已签名 manifest；旧用法（手动 JSON + 私钥）100% 兼容
@@ -207,7 +207,7 @@ In Chinese vocational (中职) schools, teacher class-period (课时) and payrol
 
 **2026-09 (v1.0.2) — GitHub Releases channel + one-click demo-data reset**
 
-- 🐙 **Default update source switched to GitHub Releases**: a new `github / cnb / custom` selector in 「基础配置 → 在线更新源」, defaulting to `github.com/leeabc-gif/Class-Hours-Tracker-/releases/latest/download/manifest.json`. Ships with `.github/workflows/release.yml` — every `v*` tag push triggers an automated build of `release/keshi-<ver>.zip` + a signed `release/manifest.json` (RSA-SHA256 via `tools/sign_manifest.php`), then publishes them as Release assets via `softprops/action-gh-release@v2`
+- 🐙 **Default update source switched to GitHub Releases**: a new `github / cnb / custom` selector in 「基础配置 → 在线更新源」, defaulting to `api.github.com/repos/leeabc-gif/Class-Hours-Tracker-/releases/latest` (UpdateService auto-fetches `tag_name` via the API, then resolves `github.com/.../releases/download/<tag>/manifest.json` for the real manifest). Ships with `.github/workflows/release.yml` — every `v*` tag push triggers an automated build of `release/keshi-<ver>.zip` + a signed `release/manifest.json` (RSA-SHA256 via `tools/sign_manifest.php`), then publishes them as Release assets via `softprops/action-gh-release@v2`
 - 🔑 **GitHub Token field**: `update_github_token` config slot (masked in API responses, optional for public repos). `UpdateService::httpGet` now injects `Authorization: Bearer ...` and produces clearer 401/403/404/429 error messages (private repo / rate-limit / asset-name mismatch)
 - 🛡️ **Backwards compatible**: the v1.0.1 **CNB** channel is retained as a fallback — admins can switch in 「基础配置」 at any time. The `custom` option allows pointing to your own object store (or Gitee raw)
 - 🧹 **Signer upgrade**: `tools/sign_manifest.php` gains a CI mode (`--version --package --private-key --changelog-file --out`) so GitHub Actions can mint a signed manifest in one line. The legacy "hand-edit JSON + private key" flow still works 100%

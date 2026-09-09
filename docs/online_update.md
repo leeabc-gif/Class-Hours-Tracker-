@@ -8,7 +8,7 @@
 ## 0. v1.0.2 重要变化
 
 - **默认更新源切到 GitHub Releases**：安装/升级后，「基础配置 → 在线更新源」默认是 `github`，清单 URL 默认指向
-  `https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/latest/download/manifest.json`
+  `https://api.github.com/repos/leeabc-gif/Class-Hours-Tracker-/releases/latest`（UpdateService 会先 GET 该 API 拿 `tag_name`，再拼 `https://github.com/.../releases/download/<tag>/manifest.json` 拉真正的 manifest；公开仓库匿名 60/h/IP，配 Token 后 5000/h）
 - **GitHub Token 字段**：`update_github_token`，公开仓库留空，私有仓库或需提升限流时填 PAT
 - **CI 自动发布**：推送 `v*` tag 到 GitHub，`.github/workflows/release.yml` 自动构建 `release/keshi-<ver>.zip` + 已签名 `release/manifest.json`，并上传到 GitHub Release
 - **一键重置示例数据**（新增）：见第 6 节

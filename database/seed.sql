@@ -5,6 +5,7 @@
 --   教师    wanglaoshi / 123456
 --   教师    lilaoshi   / 123456
 --   教师    zhaolaoshi / 123456 （已禁用，用于演示禁用态）
+-- 注：v1.0.2+ 使用真实 bcrypt hash（password_hash('admin123', PASSWORD_BCRYPT) 生成）
 -- ============================================================
 
 SET NAMES utf8mb4;
@@ -37,7 +38,7 @@ INSERT INTO `ks_department` (`id`,`name`,`sort`,`status`,`created_at`,`updated_a
 -- 教师 / 管理员账号
 -- ----------------------------
 INSERT INTO `ks_teacher` (`id`,`username`,`password`,`name`,`department_id`,`position`,`role`,`status`,`created_at`,`updated_at`) VALUES
-(1,'admin','$2y$10$TCHWAOUOyK8F.8qU3vMGhuKYd/A6QRqYYCoF6UdeX/qRPB9v.seye','系统管理员',0,'超级管理员','admin',1,UNIX_TIMESTAMP(),UNIX_TIMESTAMP()),
+(1,'admin','$2y$10$z/t0BNKNPwRjAgO2eSG8c.0W7q2sPRmBXBsSuJmPVaFqKZWgOASEq','系统管理员',0,'超级管理员','admin',1,UNIX_TIMESTAMP(),UNIX_TIMESTAMP()),
 (2,'wanglaoshi','$2y$10$GD8DVWjCzzc24TCw/6ryLOWl7Cvq85qHfH1BYoOWSqMIiqMiKRDVS','王建国',1,'讲师','teacher',1,UNIX_TIMESTAMP(),UNIX_TIMESTAMP()),
 (3,'lilaoshi','$2y$10$GD8DVWjCzzc24TCw/6ryLOWl7Cvq85qHfH1BYoOWSqMIiqMiKRDVS','李雪梅',2,'副教授','teacher',1,UNIX_TIMESTAMP(),UNIX_TIMESTAMP()),
 (4,'zhaolaoshi','$2y$10$GD8DVWjCzzc24TCw/6ryLOWl7Cvq85qHfH1BYoOWSqMIiqMiKRDVS','赵国强',3,'助教','teacher',0,UNIX_TIMESTAMP(),UNIX_TIMESTAMP());

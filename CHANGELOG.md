@@ -947,7 +947,7 @@
 ## v1.0.2 (2026-09-09) · GitHub Releases 更新源 + 一键重置示例数据
 
 ### 新增
-- 基础配置「在线更新源」三选一：github（默认）/ cnb / custom，默认指向 https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/latest/download/manifest.json
+- 基础配置「在线更新源」三选一：github（默认）/ cnb / custom，默认指向 https://api.github.com/repos/leeabc-gif/Class-Hours-Tracker-/releases/latest（UpdateService 会自动拉 API 拿 tag_name，再去 `https://github.com/.../releases/download/<tag>/manifest.json` 拉真正的 manifest）
 - update_github_token 配置（不回显明文），UpdateService 自动注入 Authorization: Bearer 头
 - Admin::resetDemoData() 一键重置示例数据；清空 8 张业务表，保留 admin 账号（≥1，密码回 admin123）+ 系统配置 + 院系 + 学期 + 非 admin 教师 + 1 门示范课程
 - 三重保险：admin 角色 + 输入 RESET + 输入当前管理员密码，全程事务 + 维护模式

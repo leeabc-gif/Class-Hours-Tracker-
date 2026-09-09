@@ -33,9 +33,10 @@ class ResetDemo
 {
     /**
      * 兜底 admin 的 bcrypt hash（对应密码 admin123）
-     * 兼容历史 seed.sql 中的 hash；如需重置为 admin123 直接落这个 hash。
+     * 真实生成的 hash，由 password_hash('admin123', PASSWORD_BCRYPT) 一次性生成
+     * （seed.sql / install.sql 中的 admin 账号在 v1.0.2+ 同步使用本值）
      */
-    const ADMIN_DEFAULT_HASH = '$2y$10$TCHWAOUOyK8F.8qU3vMGhuKYd/A6QRqYYCoF6UdeX/qRPB9v.seye';
+    const ADMIN_DEFAULT_HASH = '$2y$10$z/t0BNKNPwRjAgO2eSG8c.0W7q2sPRmBXBsSuJmPVaFqKZWgOASEq';
 
     /**
      * 兜底出厂 ks_setting（覆盖式写入，不存在的键会被补齐）

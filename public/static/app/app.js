@@ -1967,7 +1967,7 @@
       github:'切换为 GitHub Releases（推荐）。如未手动填过清单地址，将自动使用默认 GitHub 资产 URL。',
       cnb:'切换为 CNB 官方 Release（v1.0.1 兼容通道）。',
       custom:'切换为自定义：必须手动填写「更新清单地址」才可使用。'
-    }[$('#cfUpdateSource').selectedIndex];
+    }[v] || '';
     // 仅做文案提示
     const el=$('#cfGhTokenStatus');
     if(el) el.textContent='GitHub Token 状态：'+(v==='github'?'（建议配置公开仓库可留空）':'（仅 GitHub 源需要）') + '　提示：' + hint;

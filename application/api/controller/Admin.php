@@ -850,12 +850,16 @@ class Admin extends Base
 
     /**
      * GitHub Releases 默认 URL（v1.0.2 起的默认更新源）
-     * 公开仓库 `leeabc-gif/Class-Hours-Tracker-` 的 latest release 资产
-     * manifest 名固定为 manifest.json，资产名固定为 keshi-<ver>.zip
+     *
+     * 走 GitHub 公开 REST API 的 "latest release" 接口：
+     *   https://api.github.com/repos/<owner>/<repo>/releases/latest
+     * UpdateService::check 会先 GET 该 API 拿 tag_name，再去
+     *   https://github.com/<owner>/<repo>/releases/download/<tag>/manifest.json
+     * 拉真正的 manifest。这样公开仓库匿名也能用，避开 404。
      */
     public static function defaultGithubManifestUrl()
     {
-        return 'https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/latest/download/manifest.json';
+        return 'https://api.github.com/repos/leeabc-gif/Class-Hours-Tracker-/releases/latest';
     }
 
     /**
@@ -933,7 +937,7 @@ class Admin extends Base
                 return $this->fail('系统模型接口地址不能超过 500 个字符');
             }
             if ($k === 'update_source') {
-                if (!in_array($value, ['github', 'cnb', 'custom', ''], true)) {
+                if (!in_array($value, ['github', 'cnb', 'custom'], true)) {
                     return $this->fail('更新源类型不合法（github / cnb / custom）');
                 }
                 // 切到 github 时把空 manifest 兜底填上默认 URL，方便小白开箱即用
