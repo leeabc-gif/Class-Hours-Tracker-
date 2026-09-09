@@ -208,7 +208,214 @@ class Lesson extends Base
     }
 
     /**
-     * 恢复软删除
+     * 批量删除
+     *
+     * 两种调用方式：
+     *   1) 勾选若干条：ids=[12,34,56]
+     *   2) 按当前查询条件一键删全部：mode=all，附带 term_id/course_id/type/...
+     *
+     * 强制数据隔离：
+     *   - 非管理员的 ids 必须属于 teacher_id = 当前用户，
+     *     否则拒绝整批（避免"传个别人的 id 数组过来测一下"）
+     *   - mode=all 时，scope['teacher_id'] 强制写为当前用户
+     */
+    public function batchDelete()
+    {
+        $this->requireLogin();
+        $data = $this->jsonInput();
+
+        $ids   = isset($data['ids']) && is_array($data['ids']) ? $data['ids'] : [];
+        $mode  = isset($data['mode']) ? trim(strval($data['mode'])) : '';
+        $note  = isset($data['note']) ? trim(strval($data['note'])) : '';  // 可选二次确认填的备注
+
+        // 1) 勾选模式
+        if ($mode !== 'all') {
+            $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function ($i) {
+                return $i > 0;
+            })));
+            if (empty($ids)) {
+                return $this->fail('请先勾选要删除的记录');
+            }
+            if (count($ids) > 500) {
+                return $this->fail('单次最多删除 500 条，请缩小范围或分批操作');
+            }
+
+            $q = LessonModel::where('id', 'in', $ids)->where('deleted_at', 0);
+            // 非管理员：限定 teacher_id = 自己
+            if (!$this->user->isAdmin()) {
+                $q->where('teacher_id', $this->user->id);
+            }
+            $rows = $q->select();
+
+            // 找出"传过来但数据库里没有的"——明确告诉前端
+            $existed = [];
+            foreach ($rows as $r) {
+                $existed[(int)$r->id] = $r;
+            }
+            $missing = array_values(array_diff($ids, array_keys($existed)));
+            if ($missing) {
+                return $this->fail('以下记录不存在或已被删除：' . implode(',', $missing));
+            }
+
+            $count = 0;
+            foreach ($rows as $r) {
+                $r->softDelete();
+                $count++;
+            }
+
+            $this->log('batch_delete', 'lesson', 0, sprintf(
+                '批量删除课时 %d 条%s',
+                $count,
+                $note !== '' ? '（备注：' . $note . '）' : ''
+            ));
+
+            return $this->ok(['deleted' => $count], "已删除 {$count} 条");
+        }
+
+        // 2) 全量模式：按当前筛选条件
+        $scope = $this->buildScope();
+        // 非管理员：scope.teacher_id 强制设为自己（不管前端传啥）
+        if (!$this->user->isAdmin()) {
+            $scope['teacher_id'] = $this->user->id;
+        }
+        $count = LessonModel::batchSoftDeleteByScope($scope);
+
+        $this->log('batch_delete', 'lesson', 0, sprintf(
+            '按筛选条件批量删除课时 %d 条（scope=%s）%s',
+            $count,
+            json_encode($scope, JSON_UNESCAPED_UNICODE),
+            $note !== '' ? '（备注：' . $note . '）' : ''
+        ));
+
+        return $this->ok(['deleted' => $count], "已删除 {$count} 条");
+    }
+
+    /**
+     * 批量恢复
+     *
+     * 同 batchDelete 的两种模式 + 数据隔离规则。
+     * 恢复是"高危反向操作"，所以也走软删除的日志通道，方便审计。
+     */
+    public function batchRestore()
+    {
+        $this->requireLogin();
+        $data = $this->jsonInput();
+
+        $ids  = isset($data['ids']) && is_array($data['ids']) ? $data['ids'] : [];
+        $mode = isset($data['mode']) ? trim(strval($data['mode'])) : '';
+
+        if ($mode !== 'all') {
+            $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function ($i) {
+                return $i > 0;
+            })));
+            if (empty($ids)) {
+                return $this->fail('请先勾选要恢复的记录');
+            }
+            if (count($ids) > 500) {
+                return $this->fail('单次最多恢复 500 条');
+            }
+
+            $q = LessonModel::where('id', 'in', $ids)->where('deleted_at', '>', 0);
+            if (!$this->user->isAdmin()) {
+                $q->where('teacher_id', $this->user->id);
+            }
+            $rows = $q->select();
+
+            $restored = 0;
+            $conflict = 0;
+            foreach ($rows as $r) {
+                // 恢复前先查冲突
+                $dup = LessonModel::findDup(
+                    $r->teacher_id, $r->term_id,
+                    $r->week, $r->weekday, $r->section,
+                    $r->id
+                );
+                if ($dup) {
+                    $conflict++;
+                    continue;
+                }
+                $r->restore();
+                $restored++;
+            }
+
+            $this->log('batch_restore', 'lesson', 0, sprintf(
+                '批量恢复课时：成功 %d 条，跳过 %d 条（冲突）',
+                $restored, $conflict
+            ));
+
+            $msg = "已恢复 {$restored} 条";
+            if ($conflict > 0) {
+                $msg .= "，{$conflict} 条因时段冲突未恢复";
+            }
+            return $this->ok(['restored' => $restored, 'conflict' => $conflict], $msg);
+        }
+
+        // 模式：按 scope 全量恢复
+        $scope = $this->buildScope();
+        if (!$this->user->isAdmin()) {
+            $scope['teacher_id'] = $this->user->id;
+        }
+        $count = LessonModel::batchRestoreByScope($scope);
+        $this->log('batch_restore', 'lesson', 0, sprintf(
+            '按筛选条件批量恢复课时 %d 条（scope=%s）',
+            $count,
+            json_encode($scope, JSON_UNESCAPED_UNICODE)
+        ));
+        return $this->ok(['restored' => $count], "已恢复 {$count} 条");
+    }
+
+    /**
+     * 删除前先数一数：让前端在二次确认弹窗里把数字说清楚
+     *
+     * 接收同 batchDelete 的 payload，返回 affected 数量。
+     * 防止前端"以为删了 3 条实际删了 5000 条"的失误
+     */
+    public function batchDeletePreview()
+    {
+        $this->requireLogin();
+        $data = $this->jsonInput();
+
+        $ids  = isset($data['ids']) && is_array($data['ids']) ? $data['ids'] : [];
+        $mode = isset($data['mode']) ? trim(strval($data['mode'])) : '';
+
+        if ($mode !== 'all') {
+            $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function ($i) {
+                return $i > 0;
+            })));
+            if (empty($ids)) {
+                return $this->fail('请先勾选记录');
+            }
+            $q = LessonModel::where('id', 'in', $ids)->where('deleted_at', 0);
+            if (!$this->user->isAdmin()) {
+                $q->where('teacher_id', $this->user->id);
+            }
+            $count = $q->count();
+            $sum   = $q->field('COALESCE(SUM(periods),0) AS periods, COALESCE(SUM(amount),0) AS amount')->find();
+            return $this->ok([
+                'count'   => (int)$count,
+                'periods' => (float)$sum['periods'],
+                'amount'  => (float)$sum['amount'],
+                'mode'    => 'ids',
+            ]);
+        }
+
+        $scope = $this->buildScope();
+        if (!$this->user->isAdmin()) {
+            $scope['teacher_id'] = $this->user->id;
+        }
+        $q = LessonModel::scopeQuery($scope);
+        $count = $q->count();
+        $sum   = $q->field('COALESCE(SUM(periods),0) AS periods, COALESCE(SUM(amount),0) AS amount')->find();
+        return $this->ok([
+            'count'   => (int)$count,
+            'periods' => (float)$sum['periods'],
+            'amount'  => (float)$sum['amount'],
+            'mode'    => 'all',
+        ]);
+    }
+
+    /**
+     * 恢复软删除（单条）
      */
     public function restore()
     {

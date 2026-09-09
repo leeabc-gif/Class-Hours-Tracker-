@@ -205,6 +205,305 @@ class Admin extends Base
     }
 
     // ============================================================
+    // 课时全表（管理员视角）
+    // ============================================================
+
+    /**
+     * 全校课时列表：分页 + 多维筛选（教师维度不再是数据隔离前提）
+     *
+     * 几乎复用 Lesson::index 的 buildScope，但 teacher_id 允许 0（=全校）
+     */
+    public function lessons()
+    {
+        $scope = [];
+        $tid = intval($this->input('teacher_id', 0));
+        if ($tid) {
+            $scope['teacher_id'] = $tid;
+        }
+        foreach (['term_id', 'course_id', 'week', 'weekday', 'section'] as $k) {
+            $v = intval($this->input($k, 0));
+            if ($v) $scope[$k] = $v;
+        }
+        foreach (['type', 'month', 'keyword'] as $k) {
+            $v = trim((string) $this->input($k, ''));
+            if ($v !== '') $scope[$k] = $v;
+        }
+        $sd = trim((string) $this->input('start_date', ''));
+        $ed = trim((string) $this->input('end_date', ''));
+        if ($sd !== '' && $ed !== '') {
+            $scope['start_date'] = $sd;
+            $scope['end_date']   = $ed;
+        }
+        $includeDeleted = intval($this->input('include_deleted', 0)) === 1;
+
+        $page  = max(1, intval($this->input('page', 1)));
+        $limit = min(200, max(1, intval($this->input('limit', 20))));
+
+        $baseQ = $includeDeleted
+            ? LessonModel::where('deleted_at', '>=', 0)
+            : LessonModel::where('deleted_at', 0);
+
+        // 复用一个工厂函数构造 query
+        $make = function () use ($scope, $baseQ) {
+            $q = clone $baseQ;
+            if (!empty($scope['teacher_id']))  $q->where('teacher_id',  $scope['teacher_id']);
+            if (!empty($scope['term_id']))     $q->where('term_id',     $scope['term_id']);
+            if (!empty($scope['course_id']))   $q->where('course_id',   $scope['course_id']);
+            if (!empty($scope['type']))        $q->where('type',        $scope['type']);
+            if (!empty($scope['week']))        $q->where('week',        $scope['week']);
+            if (!empty($scope['weekday']))     $q->where('weekday',     $scope['weekday']);
+            if (!empty($scope['section']))     $q->where('section',     $scope['section']);
+            if (!empty($scope['month']))       $q->where('teach_date', 'like', $scope['month'] . '%');
+            if (!empty($scope['keyword'])) {
+                $kw = '%' . $scope['keyword'] . '%';
+                $q->where(function ($sq) use ($kw) {
+                    $sq->where('course_name', 'like', $kw)
+                       ->whereOr('classes', 'like', $kw)
+                       ->whereOr('remark', 'like', $kw);
+                });
+            }
+            if (!empty($scope['start_date']) && !empty($scope['end_date'])) {
+                $q->where('teach_date', 'between', [$scope['start_date'], $scope['end_date']]);
+            }
+            return $q;
+        };
+
+        $total = $make()->count();
+        $rows  = $make()
+            ->order('deleted_at asc, week desc, weekday asc, section asc')
+            ->page($page, $limit)
+            ->select();
+
+        $list = [];
+        foreach ($rows as $r) {
+            $row = $r->toFullArray();
+            $row['teacher_name'] = $r->teacherName();
+            $row['is_deleted']   = $r->getData('deleted_at') > 0 ? 1 : 0;
+            $list[] = $row;
+        }
+
+        $sum = $make()
+            ->field('COALESCE(SUM(periods),0) AS periods, COALESCE(SUM(amount),0) AS amount, COUNT(*) AS cnt')
+            ->find();
+
+        return $this->ok([
+            'list'  => $list,
+            'total' => (int)$total,
+            'page'  => $page,
+            'limit' => $limit,
+            'pages' => (int)ceil($total / $limit),
+            'summary' => [
+                'cnt'     => (int)$sum['cnt'],
+                'periods' => (float)$sum['periods'],
+                'amount'  => (float)$sum['amount'],
+            ],
+        ]);
+    }
+
+    /**
+     * 管理员一键批量删除课时
+     *
+     * payload 与 Lesson::batchDelete 一致，
+     * 只是 scope 里的 teacher_id 允许为 0（=全校），
+     * 仍然要求非空 scope（不允许"无任何条件全删整个学校"
+     * 这种一个误操作就把数据库打光的活）。
+     */
+    public function lessonBatchDelete()
+    {
+        $data = $this->jsonInput();
+        $ids  = isset($data['ids']) && is_array($data['ids']) ? $data['ids'] : [];
+        $mode = isset($data['mode']) ? trim(strval($data['mode'])) : '';
+        $note = isset($data['note']) ? trim(strval($data['note'])) : '';
+
+        if ($mode !== 'all') {
+            $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function ($i) {
+                return $i > 0;
+            })));
+            if (empty($ids)) {
+                return $this->fail('请先勾选记录');
+            }
+            if (count($ids) > 1000) {
+                return $this->fail('单次最多删除 1000 条');
+            }
+            $q = LessonModel::where('id', 'in', $ids)->where('deleted_at', 0);
+            $rows = $q->select();
+            $count = 0;
+            foreach ($rows as $r) {
+                $r->softDelete();
+                $count++;
+            }
+            $this->log('batch_delete', 'lesson', 0, sprintf(
+                '管理员批量删除课时 %d 条（ids 共 %d 个，note=%s）',
+                $count, count($ids), $note
+            ));
+            return $this->ok(['deleted' => $count], "已删除 {$count} 条");
+        }
+
+        // 全量：必须带至少一个过滤条件
+        $scope = [];
+        $tid = intval(isset($data['teacher_id']) ? $data['teacher_id'] : 0);
+        if ($tid) $scope['teacher_id'] = $tid;
+        foreach (['term_id', 'course_id', 'week', 'weekday', 'section'] as $k) {
+            $v = intval(isset($data[$k]) ? $data[$k] : 0);
+            if ($v) $scope[$k] = $v;
+        }
+        foreach (['type', 'month', 'keyword'] as $k) {
+            $v = trim((string) (isset($data[$k]) ? $data[$k] : ''));
+            if ($v !== '') $scope[$k] = $v;
+        }
+        $sd = trim((string) (isset($data['start_date']) ? $data['start_date'] : ''));
+        $ed = trim((string) (isset($data['end_date']) ? $data['end_date'] : ''));
+        if ($sd !== '' && $ed !== '') {
+            $scope['start_date'] = $sd;
+            $scope['end_date']   = $ed;
+        }
+        if (empty($scope)) {
+            return $this->fail('一键删除全部必须至少带一个筛选条件（教师/学期/课程/日期…），以防误操作');
+        }
+
+        $count = LessonModel::batchSoftDeleteByScope($scope);
+        $this->log('batch_delete', 'lesson', 0, sprintf(
+            '管理员按筛选条件批量删除课时 %d 条（scope=%s, note=%s）',
+            $count,
+            json_encode($scope, JSON_UNESCAPED_UNICODE),
+            $note
+        ));
+        return $this->ok(['deleted' => $count], "已删除 {$count} 条");
+    }
+
+    /**
+     * 管理员一键批量恢复
+     */
+    public function lessonBatchRestore()
+    {
+        $data = $this->jsonInput();
+        $ids  = isset($data['ids']) && is_array($data['ids']) ? $data['ids'] : [];
+        $mode = isset($data['mode']) ? trim(strval($data['mode'])) : '';
+
+        if ($mode !== 'all') {
+            $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function ($i) {
+                return $i > 0;
+            })));
+            if (empty($ids)) {
+                return $this->fail('请先勾选要恢复的记录');
+            }
+            $q = LessonModel::where('id', 'in', $ids)->where('deleted_at', '>', 0);
+            $rows = $q->select();
+            $restored = 0;
+            $conflict = 0;
+            foreach ($rows as $r) {
+                $dup = LessonModel::findDup(
+                    $r->teacher_id, $r->term_id,
+                    $r->week, $r->weekday, $r->section,
+                    $r->id
+                );
+                if ($dup) {
+                    $conflict++;
+                    continue;
+                }
+                $r->restore();
+                $restored++;
+            }
+            $this->log('batch_restore', 'lesson', 0, sprintf(
+                '管理员批量恢复课时：成功 %d 条，跳过 %d 条（冲突）',
+                $restored, $conflict
+            ));
+            $msg = "已恢复 {$restored} 条";
+            if ($conflict > 0) {
+                $msg .= "，{$conflict} 条因时段冲突未恢复";
+            }
+            return $this->ok(['restored' => $restored, 'conflict' => $conflict], $msg);
+        }
+
+        $scope = [];
+        $tid = intval(isset($data['teacher_id']) ? $data['teacher_id'] : 0);
+        if ($tid) $scope['teacher_id'] = $tid;
+        foreach (['term_id', 'course_id'] as $k) {
+            $v = intval(isset($data[$k]) ? $data[$k] : 0);
+            if ($v) $scope[$k] = $v;
+        }
+        foreach (['type', 'month', 'keyword'] as $k) {
+            $v = trim((string) (isset($data[$k]) ? $data[$k] : ''));
+            if ($v !== '') $scope[$k] = $v;
+        }
+        $sd = trim((string) (isset($data['start_date']) ? $data['start_date'] : ''));
+        $ed = trim((string) (isset($data['end_date']) ? $data['end_date'] : ''));
+        if ($sd !== '' && $ed !== '') {
+            $scope['start_date'] = $sd;
+            $scope['end_date']   = $ed;
+        }
+        if (empty($scope)) {
+            return $this->fail('一键恢复全部必须至少带一个筛选条件');
+        }
+
+        $count = LessonModel::batchRestoreByScope($scope);
+        $this->log('batch_restore', 'lesson', 0, sprintf(
+            '管理员按筛选条件批量恢复课时 %d 条（scope=%s）',
+            $count,
+            json_encode($scope, JSON_UNESCAPED_UNICODE)
+        ));
+        return $this->ok(['restored' => $count], "已恢复 {$count} 条");
+    }
+
+    /**
+     * 管理员删除前预估数量（双确认弹窗用）
+     */
+    public function lessonBatchDeletePreview()
+    {
+        $data = $this->jsonInput();
+        $ids  = isset($data['ids']) && is_array($data['ids']) ? $data['ids'] : [];
+        $mode = isset($data['mode']) ? trim(strval($data['mode'])) : '';
+
+        if ($mode !== 'all') {
+            $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function ($i) {
+                return $i > 0;
+            })));
+            if (empty($ids)) {
+                return $this->fail('请先勾选记录');
+            }
+            $q = LessonModel::where('id', 'in', $ids)->where('deleted_at', 0);
+            $count = $q->count();
+            $sum   = $q->field('COALESCE(SUM(periods),0) AS periods, COALESCE(SUM(amount),0) AS amount')->find();
+            return $this->ok([
+                'count'   => (int)$count,
+                'periods' => (float)$sum['periods'],
+                'amount'  => (float)$sum['amount'],
+                'mode'    => 'ids',
+            ]);
+        }
+
+        $scope = [];
+        $tid = intval(isset($data['teacher_id']) ? $data['teacher_id'] : 0);
+        if ($tid) $scope['teacher_id'] = $tid;
+        foreach (['term_id', 'course_id', 'week', 'weekday', 'section'] as $k) {
+            $v = intval(isset($data[$k]) ? $data[$k] : 0);
+            if ($v) $scope[$k] = $v;
+        }
+        foreach (['type', 'month', 'keyword'] as $k) {
+            $v = trim((string) (isset($data[$k]) ? $data[$k] : ''));
+            if ($v !== '') $scope[$k] = $v;
+        }
+        $sd = trim((string) (isset($data['start_date']) ? $data['start_date'] : ''));
+        $ed = trim((string) (isset($data['end_date']) ? $data['end_date'] : ''));
+        if ($sd !== '' && $ed !== '') {
+            $scope['start_date'] = $sd;
+            $scope['end_date']   = $ed;
+        }
+        if (empty($scope)) {
+            return $this->ok(['count' => 0, 'periods' => 0, 'amount' => 0, 'mode' => 'all', 'need_filter' => true]);
+        }
+        $q = LessonModel::scopeQuery($scope);
+        $count = $q->count();
+        $sum   = $q->field('COALESCE(SUM(periods),0) AS periods, COALESCE(SUM(amount),0) AS amount')->find();
+        return $this->ok([
+            'count'   => (int)$count,
+            'periods' => (float)$sum['periods'],
+            'amount'  => (float)$sum['amount'],
+            'mode'    => 'all',
+        ]);
+    }
+
+    // ============================================================
     // 院系
     // ============================================================
 

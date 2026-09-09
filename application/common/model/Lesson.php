@@ -281,4 +281,59 @@ class Lesson extends Model
         $this->deleted_at = 0;
         return $this->save();
     }
+
+    /**
+     * 批量软删除：把符合 $scope 条件的记录全部打上 deleted_at=time()
+     * 用于「按当前查询条件一键删除全部」
+     *
+     * 不用 $this->update() 是因为 update() 不会经过自动时间戳；
+     * 用 Db::name() 拼 SQL，对 InnoDB 大表 1 次更新最快。
+     *
+     * @return int 影响行数
+     */
+    public static function batchSoftDeleteByScope(array $scope)
+    {
+        // scopeQuery 已经是「排除 deleted_at=0」的活查询，
+        // 直接把它当 update 目标即可；同时忽略 delete_time=0
+        $q = self::scopeQuery($scope);
+        $now = time();
+        return $q->update(['deleted_at' => $now]);
+    }
+
+    /**
+     * 批量恢复：把 deleted_at>0 的 + 匹配 scope 条件的，全部回到 0
+     * 用于「一键恢复全部」 / 「恢复某教师某学期全部」
+     */
+    public static function batchRestoreByScope(array $scope)
+    {
+        // scopeQuery 不接受"包含已删"——直接拼一个对应的包含分支
+        $q = self::where('deleted_at', '>', 0);
+        if (!empty($scope['teacher_id'])) {
+            $q->where('teacher_id', $scope['teacher_id']);
+        }
+        if (!empty($scope['term_id'])) {
+            $q->where('term_id', $scope['term_id']);
+        }
+        if (!empty($scope['course_id'])) {
+            $q->where('course_id', $scope['course_id']);
+        }
+        if (!empty($scope['type'])) {
+            $q->where('type', $scope['type']);
+        }
+        if (!empty($scope['keyword'])) {
+            $kw = '%' . $scope['keyword'] . '%';
+            $q->where(function ($sq) use ($kw) {
+                $sq->where('course_name', 'like', $kw)
+                   ->whereOr('classes', 'like', $kw)
+                   ->whereOr('remark', 'like', $kw);
+            });
+        }
+        if (!empty($scope['start_date']) && !empty($scope['end_date'])) {
+            $q->where('teach_date', 'between', [$scope['start_date'], $scope['end_date']]);
+        }
+        if (!empty($scope['month'])) {
+            $q->where('teach_date', 'like', $scope['month'] . '%');
+        }
+        return $q->update(['deleted_at' => 0]);
+    }
 }

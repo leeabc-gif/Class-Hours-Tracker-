@@ -625,15 +625,28 @@
   // =====================================================================
   // 7. 课时数据公共逻辑（新增/列表读取）
   // =====================================================================
-  function buildLessonQuery() {
+  function   buildLessonQuery() {
     const el = $('#my-term'); if (!el) return null;
     const q = { term_id: el.value || '' };
-    const typeEl = $('#my-type'); if (typeEl && typeEl.value) q.type = typeEl.value;
-    const kwEl = $('#my-kw'); if (kwEl && kwEl.value.trim()) q.keyword = kwEl.value.trim();
-    const mEl = $('#my-month'); if (mEl && mEl.value) q.month = mEl.value;
-    const cEl = $('#my-course'); if (cEl && cEl.value) q.course_id = cEl.value;
+    const typeEl = $('#my-type');     if (typeEl && typeEl.value)     q.type     = typeEl.value;
+    const kwEl   = $('#my-kw');        if (kwEl && kwEl.value.trim()) q.keyword  = kwEl.value.trim();
+    const mEl    = $('#my-month');      if (mEl && mEl.value)          q.month    = mEl.value;
+    const cEl    = $('#my-course');     if (cEl && cEl.value)          q.course_id = cEl.value;
+    const wEl    = $('#my-week');       if (wEl && wEl.value)          q.week     = wEl.value;
+    const wdEl   = $('#my-weekday');    if (wdEl && wdEl.value)        q.weekday  = wdEl.value;
+    const secEl  = $('#my-section');    if (secEl && secEl.value)      q.section  = secEl.value;
+    const sdEl   = $('#my-start');      if (sdEl && sdEl.value)        q.start_date = sdEl.value;
+    const edEl   = $('#my-end');        if (edEl && edEl.value)        q.end_date   = edEl.value;
     return q;
   }
+
+  // 一键清空所有筛选，回到"当前学期"全集
+  App.resetLessonFilter = function () {
+    ['#my-course','#my-type','#my-week','#my-weekday','#my-section','#my-month','#my-start','#my-end','#my-kw'].forEach(s => {
+      const e = $(s); if (e) e.value = '';
+    });
+    KS.refreshLessons();
+  };
 
   function lessonFilterBar(extra) {
     const t = App.boot.terms || [];
@@ -642,13 +655,25 @@
       + Object.keys(TYPES).map(k => '<option value="' + k + '">' + TYPES[k] + '</option>').join('');
     const courses = App.boot.courses || [];
     const cOpts = '<option value="">全部课程</option>' + courses.map(c => '<option value="' + c.id + '">' + esc(c.name) + '</option>').join('');
+    const weekOpts  = '<option value="">全部周次</option>' + [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20].map(w => '<option value="' + w + '">第' + w + '周</option>').join('');
+    const weekdayOpts = '<option value="">全部星期</option>'
+      + [1,2,3,4,5,6,7].map(k => '<option value="' + k + '">' + App.enumWeekday(k) + '</option>').join('');
+    const sectionOpts = '<option value="">全部节次</option>'
+      + [1,2,3,4,5,6].map(k => '<option value="' + k + '">' + App.enumSection(k) + '</option>').join('');
     return '<div class="filters" id="myFilters">'
       + '<select id="my-term" class="form-select" style="width:auto;max-width:230px" onchange="KS.refreshLessons()">' + termOpts + '</select>'
       + '<select id="my-course" class="form-select" style="width:auto" onchange="KS.refreshLessons()">' + cOpts + '</select>'
       + '<select id="my-type" class="form-select" style="width:auto" onchange="KS.refreshLessons()">' + typeOpts + '</select>'
-      + '<input id="my-month" type="month" class="form-control" style="width:auto" onchange="KS.refreshLessons()">'
-      + '<input id="my-kw" class="form-control" placeholder="课程/班级/备注搜索" style="width:190px" onkeydown="if(event.key===\'Enter\')KS.refreshLessons()">'
+      + '<select id="my-week" class="form-select" style="width:auto" onchange="KS.refreshLessons()">' + weekOpts + '</select>'
+      + '<select id="my-weekday" class="form-select" style="width:auto" onchange="KS.refreshLessons()">' + weekdayOpts + '</select>'
+      + '<select id="my-section" class="form-select" style="width:auto" onchange="KS.refreshLessons()">' + sectionOpts + '</select>'
+      + '<input id="my-month" type="month" class="form-control" style="width:auto" onchange="KS.refreshLessons()" title="按月份过滤(YYYY-MM)">'
+      + '<input id="my-start" type="date" class="form-control" style="width:auto" onchange="KS.refreshLessons()" title="开始日期">'
+      + '<span class="text-muted small">至</span>'
+      + '<input id="my-end" type="date" class="form-control" style="width:auto" onchange="KS.refreshLessons()" title="结束日期">'
+      + '<input id="my-kw" class="form-control" placeholder="课程/班级/备注搜索" style="width:180px" onkeydown="if(event.key===\'Enter\')KS.refreshLessons()">'
       + '<button class="btn btn-outline-secondary btn-sm" onclick="KS.refreshLessons()"><i class="bi bi-search"></i> 查询</button>'
+      + '<button class="btn btn-link btn-sm text-secondary" onclick="KS.resetLessonFilter()" title="重置筛选"><i class="bi bi-arrow-counterclockwise"></i> 重置</button>'
       + '<div class="flex-grow-1"></div>'
       + (extra || '')
       + '</div>';
@@ -873,12 +898,20 @@
       + '<button class="btn btn-light btn-sm" onclick="KS.batchOpen()"><i class="bi bi-collection me-1"></i>批量生成</button>'
       + '<button class="btn btn-primary btn-sm" onclick="KS.lessonForm()"><i class="bi bi-plus-lg me-1"></i>完整新增</button>'
       + '</div>'
-      + lessonFilterBar('<button class="btn btn-outline-success btn-sm" onclick="KS.exportMine()"><i class="bi bi-download me-1"></i>导出</button>')
+      + lessonFilterBar(
+          '<button class="btn btn-outline-secondary btn-sm" onclick="KS.lessonBatchByQuery(\'delete\')" title="按当前筛选条件一键删除所有匹配记录"><i class="bi bi-trash me-1"></i>一键删除当前查询</button>'
+        + '<button class="btn btn-outline-success btn-sm" onclick="KS.exportMine()"><i class="bi bi-download me-1"></i>导出</button>')
       + '<div class="table-responsive"><table class="table"><thead><tr>'
-      + '<th>周</th><th>星期</th><th>节次</th><th>课程</th><th>班级</th><th>类型</th><th>节数</th><th class="text-end">金额</th><th>来源</th><th>授课日期</th><th style="width:120px">操作</th>'
+      + '<th style="width:36px"><input type="checkbox" id="lessonCheckAll" onclick="KS.toggleCheckAll(this)"></th>'
+      + '<th>周</th><th>星期</th><th>节次</th><th>课程</th><th>班级</th><th>类型</th><th>节数</th><th class="text-end">金额</th><th>来源</th><th>授课日期</th><th style="width:200px">操作</th>'
       + '</tr></thead><tbody id="lessonTbody"></tbody></table></div>'
       + '<div class="card-b d-flex justify-content-between align-items-center pt-2">'
+      + '<div class="d-flex align-items-center gap-2">'
       + '<span class="small text-muted" id="lessonSum"></span>'
+      + '<span class="vr"></span>'
+      + '<span class="small text-muted" id="lessonCheckedInfo">已选 0 条</span>'
+      + '<button class="btn btn-sm btn-outline-danger" id="lessonBatchDelBtn" disabled onclick="KS.lessonBatchDelete(\'ids\')"><i class="bi bi-trash me-1"></i>删除选中</button>'
+      + '</div>'
       + '<nav><ul class="pagination pagination-sm mb-0" id="lessonPage"></ul></nav></div>'
       + '</div>';
     loadLessons();
@@ -901,6 +934,7 @@
         tbody.innerHTML = '<tr><td colspan="11"><div class="dk-empty"><i class="bi bi-inbox"></i>当前条件下暂无课时记录</div></td></tr>';
       } else {
         tbody.innerHTML = lessonRows.map(l => '<tr>'
+          + '<td><input type="checkbox" class="lesson-row-check" value="' + l.id + '" onchange="KS.updateCheckState()"></td>'
           + '<td>第' + l.week + '周</td><td>' + App.enumWeekday(l.weekday) + '</td><td>' + App.enumSection(l.section) + '</td>'
           + '<td><b>' + esc(l.course_name) + '</b>' + (l.teacher_name ? '<div class="small text-muted">' + esc(l.teacher_name) + '</div>' : '') + '</td>'
           + '<td class="small">' + esc(l.classes) + '</td>'
@@ -921,6 +955,9 @@
       for (let i=1;i<=maxPage;i++) ph += show(i,i,false);
       ph += show('»', Math.min(maxPage, lessonPageNo+1), lessonPageNo>=maxPage);
       $('#lessonPage').innerHTML = ph;
+      // 重渲后清掉全选框 & 勾选状态
+      const ca = $('#lessonCheckAll'); if (ca) ca.checked = false;
+      KS.updateCheckState();
     } catch (e) {}
   }
   App.lessonPage = function (n) { lessonPageNo = n; loadLessons(); return false; };
