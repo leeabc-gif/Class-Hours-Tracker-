@@ -585,7 +585,16 @@ class UpdateService
     }
 
     /**
-     * 从 zip 里读出 upgrade.sql 并事务执行
+     * 从 zip 里读出 upgrade.sql 并执行
+     *
+     * 事务策略（重要）：
+     *   MySQL 的 DDL（CREATE/ALTER/DROP/TRUNCATE/RENAME 等）会触发**隐式提交**，
+     *   一旦执行，当前事务立即结束，PDO::inTransaction() 变为 false。此后再调用
+     *   commit()/rollBack() 都会抛 "There is no active transaction"，
+     *   并把真正的失败原因掩盖掉（v1.1.0 升级线上事故即由此产生：
+     *   upgrade.sql 里有 7 个 CREATE TABLE，第 1 条就把事务顶掉了）。
+     *   因此：含 DDL 时不再开事务（开了也是假的保护），改为逐条执行 + 详细报错；
+     *   纯 DML 时才用事务保证原子性。
      */
     protected static function runSqlFromZip($zipPath, $entry)
     {
@@ -599,8 +608,21 @@ class UpdateService
             throw new \RuntimeException('更新包内 upgrade.sql 为空。');
         }
         $statements = self::splitSqlStatements(self::stripSqlLineComments($sql));
+
+        // 预扫描：是否含会触发隐式提交的 DDL
+        $hasDdl = false;
+        foreach ($statements as $s) {
+            if (self::isImplicitCommitStatement($s)) {
+                $hasDdl = true;
+                break;
+            }
+        }
+
         $pdo = \app\common\service\Backup::rawPdo();
-        $pdo->beginTransaction();
+        $useTx = !$hasDdl;
+        if ($useTx) {
+            $pdo->beginTransaction();
+        }
         try {
             $idx = 0;
             foreach ($statements as $stmt) {
@@ -619,14 +641,53 @@ class UpdateService
                         'stmt_preview' => mb_substr($stmt, 0, 200, 'UTF-8'),
                         'error' => $e->getMessage(),
                     ]);
-                    throw new \RuntimeException('执行 upgrade.sql 失败：第 ' . $idx . ' 条语句（' . $e->getMessage() . '）');
+                    throw new \RuntimeException('第 ' . $idx . ' 条语句（' . $e->getMessage() . '）');
                 }
             }
-            $pdo->commit();
+            // 事务可能已被 DDL 隐式提交掉，commit 前必须复查，否则抛 no active transaction
+            if ($pdo->inTransaction()) {
+                $pdo->commit();
+            }
         } catch (\Throwable $e) {
-            $pdo->rollBack();
-            throw new \RuntimeException('执行 upgrade.sql 失败，已回滚数据库：' . $e->getMessage());
+            // rollBack 同理：只能在事务仍存活时调用
+            $rolled = false;
+            $note = '';
+            try {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                    $rolled = true;
+                }
+            } catch (\Throwable $re) {
+                Log::error('[update] upgrade.sql rollback failed: ' . $re->getMessage());
+                $note = '（数据库回滚失败：' . $re->getMessage() . '）';
+            }
+            if (!$rolled && $note === '') {
+                $note = $hasDdl
+                    ? '（该 SQL 含建表/改表语句，MySQL 已隐式提交，数据库无法自动回滚；'
+                        . '如需还原请用升级前的数据库备份）'
+                    : '（数据库未产生变更）';
+            }
+            $prefix = $rolled ? '执行 upgrade.sql 失败，已回滚数据库：' : '执行 upgrade.sql 失败：';
+            throw new \RuntimeException($prefix . $e->getMessage() . $note, 0, $e);
         }
+    }
+
+    /**
+     * 判断一条 SQL 是否会让 MySQL 隐式提交当前事务（DDL 及部分管理语句）
+     */
+    protected static function isImplicitCommitStatement($stmt)
+    {
+        $s = ltrim((string) $stmt);
+        if ($s === '') {
+            return false;
+        }
+        // 去掉开头的行注释/块注释，避免注释里的关键字误判
+        $s = preg_replace('#^(?:\s*(?:--[^\n]*\n|/\*.*?\*/|\#[^\n]*\n))+#s', '', $s);
+        $s = ltrim((string) $s);
+        return (bool) preg_match(
+            '/^(CREATE|ALTER|DROP|TRUNCATE|RENAME|GRANT|REVOKE|FLUSH|LOCK|UNLOCK|ANALYZE|OPTIMIZE|REPAIR)\b/i',
+            $s
+        );
     }
 
     // ---------------------------------------------------------------
