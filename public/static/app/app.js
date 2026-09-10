@@ -523,6 +523,7 @@
         { p: 'my-calendar', i: 'calendar3', t: '我的日历' },
         { p: 'my-stats', i: 'bar-chart', t: '我的统计' },
         { p: 'ai', i: 'robot', t: 'AI 助手' },
+        { p: 'ai-playground', i: 'joystick', t: 'AI 操练场' },
         { p: 'ai-tokens', i: 'key', t: 'API 令牌' },
         { p: 'settings', i: 'person-gear', t: '个人设置' },
       ];
@@ -535,6 +536,7 @@
       { p: 'my-calendar', i: 'calendar3', t: '课表日历' },
       { p: 'my-stats', i: 'bar-chart', t: '我的统计' },
       { p: 'ai', i: 'robot', t: 'AI 智能分析' },
+      { p: 'ai-playground', i: 'joystick', t: 'AI 操练场' },
       { p: 'ai-tokens', i: 'key', t: 'API 令牌' },
       { p: 'settings', i: 'person-gear', t: '个人设置' },
     ];
@@ -576,6 +578,7 @@
     'my-calendar': { t: '课表日历', a: '周视图' },
     'my-stats': { t: '我的统计', a: '数据分析' },
     'ai': { t: 'AI 智能分析', a: '对话 · 解析 · 评估' },
+    'ai-playground': { t: 'AI 操练场', a: '选模型 · 调参数 · 看消耗' },
     'ai-tokens': { t: '我的 API 令牌', a: '额度 · sk- 密钥 · 外部调用' },
     'settings': { t: '个人设置', a: '资料与密码' },
   };
@@ -2011,6 +2014,260 @@
       }
       toast('已复制');
     } catch (e) { toast('复制失败，请手动选择复制', 'warn'); }
+  };
+
+  // -------- AI 操练场（选模型 · 调参数 · 看消耗）--------
+  // 会话只存在内存里（刷新即清空），但每次调用都会写入 ks_ai_usage_log 并扣额度。
+  let pgState = {
+    models: [], presets: [], quota: null,
+    model: '', system: '', temperature: 0.7, max_tokens: 0,
+    msgs: [], busy: false, hasChannel: false,
+  };
+
+  ROUTERS['ai-playground'] = function (host) {
+    host.innerHTML = '<div class="ai-wrap">'
+      + '<div class="pg-side"><div class="hd"><i class="bi bi-sliders text-primary"></i>参数</div>'
+      + '<div class="bd" id="pgParam"><div class="text-center text-muted small py-4">加载中…</div></div></div>'
+      + '<div class="ai-main">'
+      + '<div class="d-flex align-items-center gap-2 px-3 py-2" style="border-bottom:1px solid #f1f5f9">'
+      + '<i class="bi bi-joystick text-primary"></i><span class="small text-muted" id="pgModelTag">—</span>'
+      + '<div class="flex-grow-1"></div>'
+      + '<button class="btn btn-sm btn-outline-secondary" onclick="KS.pgCopy()"><i class="bi bi-clipboard me-1"></i>复制对话</button> '
+      + '<button class="btn btn-sm btn-outline-danger" onclick="KS.pgClear()"><i class="bi bi-eraser me-1"></i>清空</button>'
+      + '</div>'
+      + '<div class="ai-msgs" id="pgMsgs"></div>'
+      + '<div class="ai-in"><textarea id="pgInput" class="form-control" placeholder="输入内容，Enter 发送，Shift+Enter 换行" '
+      + 'onkeydown="if(event.key===\'Enter\'&&!event.shiftKey){event.preventDefault();KS.pgSend();}"></textarea>'
+      + '<button class="btn btn-primary px-3" id="pgSendBtn" onclick="KS.pgSend()"><i class="bi bi-send-fill"></i></button></div>'
+      + '</div></div>';
+    pgLoad();
+  };
+
+  async function pgLoad() {
+    const res = await GET('/api/playground/bootstrap');
+    if (gone('pgParam')) return;
+    const box = $('#pgParam');
+    if (res.code !== 0) {
+      if (box) box.innerHTML = '<div class="text-danger small">' + esc(res.msg) + '</div>';
+      return;
+    }
+    const d = res.data || {};
+    pgState.models     = d.models || [];
+    pgState.presets    = d.presets || [];
+    pgState.quota      = d.quota || null;
+    pgState.hasChannel = !!d.has_channel;
+    if (!pgState.model) {
+      pgState.model = d.default_model || (pgState.models[0] ? pgState.models[0].model_key : '');
+    }
+    pgRenderParam();
+    pgRenderMsgs();
+    pgRenderModelTag();
+  }
+
+  function pgCurModel() {
+    for (let i = 0; i < pgState.models.length; i++) {
+      if (pgState.models[i].model_key === pgState.model) return pgState.models[i];
+    }
+    return null;
+  }
+
+  function pgRenderParam() {
+    const box = $('#pgParam');
+    if (!box) return;
+
+    const opts = pgState.models.map(function (m) {
+      const sel = m.model_key === pgState.model ? ' selected' : '';
+      return '<option value="' + esc(m.model_key) + '"' + sel + '>'
+        + esc(m.display_name || m.model_key)
+        + (m.runnable ? '' : '（无可用渠道）') + '</option>';
+    }).join('');
+
+    const presetHtml = (pgState.presets || []).map(function (p, i) {
+      return '<button class="pg-preset" onclick="KS.pgPreset(' + i + ')">' + esc(p.t) + '</button>';
+    }).join('');
+
+    box.innerHTML = '<div class="pg-lb">模型</div>'
+      + '<select id="pgModel" class="form-select form-select-sm" onchange="KS.pgModelChange()">'
+      + (opts || '<option value="">（暂无可用模型）</option>') + '</select>'
+      + '<div class="pg-meta" id="pgRatio"></div>'
+      + '<div class="pg-lb">系统提示词</div>'
+      + '<textarea id="pgSystem" class="form-control form-control-sm" rows="4" placeholder="给模型设定角色与输出要求，留空则不加" '
+      + 'oninput="KS.pgSetSystem(this.value)">' + esc(pgState.system) + '</textarea>'
+      + '<div class="pg-lb">预设角色</div><div>' + (presetHtml || '<span class="text-muted small">—</span>') + '</div>'
+      + '<div class="pg-lb">温度 <span class="text-muted fw-normal" id="pgTempVal"></span></div>'
+      + '<input id="pgTemp" type="range" class="form-range" min="0" max="2" step="0.1" value="' + pgState.temperature + '" oninput="KS.pgTempChange()">'
+      + '<div class="pg-lb">最大输出 token（0 = 不限制）</div>'
+      + '<input id="pgMaxTok" type="number" class="form-control form-control-sm" min="0" max="8192" value="' + (pgState.max_tokens || 0) + '" onchange="KS.pgSetMax(this.value)">'
+      + '<div class="pg-lb">我的额度</div><div class="pg-quota" id="pgQuota"></div>';
+
+    pgTempChange();
+    pgRenderRatio();
+    pgRenderQuota();
+  }
+
+  function pgRenderRatio() {
+    const el = $('#pgRatio');
+    if (!el) return;
+    const m = pgCurModel();
+    if (!m) { el.textContent = pgState.models.length ? '' : '管理员还没有添加 AI 渠道，请先到「AI 中转 → 渠道」配置。'; return; }
+    el.textContent = '计费倍率：输入 ×' + m.prompt_ratio + '，输出 ×' + m.completion_ratio
+      + (m.runnable ? '' : '（该模型当前没有可用渠道，调用会失败）');
+  }
+
+  function pgRenderModelTag() {
+    const el = $('#pgModelTag');
+    if (!el) return;
+    el.textContent = pgState.model ? pgState.model : '未选择模型';
+  }
+
+  function pgRenderQuota() {
+    const box = $('#pgQuota');
+    if (!box) return;
+    const q = pgState.quota;
+    if (!q) { box.innerHTML = '<span class="text-muted">暂无额度信息</span>'; return; }
+    const row = function (label, used, limit, left) {
+      return '<div class="row"><span>' + label + '</span><b>' + esc(String(used))
+        + (limit > 0 ? ' / ' + esc(String(limit)) + '（余 ' + esc(String(left)) + '）' : ' / 不限') + '</b></div>';
+    };
+    box.innerHTML = '<div class="row"><span>总余额</span><b>' + esc(String(q.balance)) + ' 点</b></div>'
+      + row('今日', q.daily_used, q.daily_limit, q.remaining_daily)
+      + row('本周', q.weekly_used, q.weekly_limit, q.remaining_weekly)
+      + row('本月', q.monthly_used, q.monthly_limit, q.remaining_monthly)
+      + '<div class="row"><span>累计消耗</span><b>' + esc(String(q.total_used)) + ' 点</b></div>';
+  }
+
+  function pgRenderMsgs() {
+    const host = $('#pgMsgs');
+    if (!host) return;
+    if (!pgState.msgs.length) {
+      host.innerHTML = '<div class="pg-empty"><i class="bi bi-joystick" style="font-size:34px;display:block;margin-bottom:8px"></i>'
+        + 'AI 操练场：自由选模型、调温度、看每次调用扣多少点。<br>'
+        + '左侧切换模型与预设角色，回答下方会显示 token 用量与扣点数。</div>';
+      return;
+    }
+    host.innerHTML = pgState.msgs.map(function (m) {
+      const who = m.role === 'user';
+      const err = m.role === 'error';
+      let stat = '';
+      if (m.stat && !who && !err) {
+        stat = '<div class="stat"><span>' + esc(m.stat.model) + '</span>'
+          + '<span>输入 ' + m.stat.prompt + ' / 输出 ' + m.stat.completion + ' token</span>'
+          + '<span>扣 ' + m.stat.points + ' 点</span>'
+          + '<span>' + m.stat.latency + ' ms</span></div>';
+      }
+      return '<div class="msg ' + (who ? 'user' : 'ai') + '">'
+        + '<div class="bubble' + (err ? ' text-danger' : '') + '">' + esc(m.content) + '</div>'
+        + stat + '<div class="meta">' + (who ? '我' : (err ? '错误' : 'AI')) + ' · ' + esc(m.time) + '</div></div>';
+    }).join('');
+    host.scrollTop = host.scrollHeight;
+  }
+
+  App.pgModelChange = function () {
+    const sel = $('#pgModel');
+    if (!sel) return;
+    pgState.model = sel.value;
+    pgRenderRatio();
+    pgRenderModelTag();
+  };
+  App.pgTempChange = function () {
+    const r = $('#pgTemp'), lab = $('#pgTempVal');
+    if (!r) return;
+    pgState.temperature = parseFloat(r.value);
+    if (lab) lab.textContent = pgState.temperature.toFixed(1);
+  };
+  App.pgSetSystem = function (v) { pgState.system = String(v || ''); };
+  App.pgSetMax = function (v) {
+    let n = parseInt(v, 10);
+    if (!n || n < 0) n = 0;
+    if (n > 8192) n = 8192;
+    pgState.max_tokens = n;
+    const el = $('#pgMaxTok');
+    if (el) el.value = n;
+  };
+  App.pgPreset = function (i) {
+    const p = pgState.presets[i];
+    if (!p) return;
+    pgState.system = p.s || '';
+    const ta = $('#pgSystem');
+    if (ta) ta.value = pgState.system;
+    toast('已套用预设：' + p.t);
+  };
+  App.pgClear = function () {
+    if (!pgState.msgs.length) return;
+    if (!confirm('清空当前对话？（不会退还已消耗的点数）')) return;
+    pgState.msgs = [];
+    pgRenderMsgs();
+  };
+  App.pgCopy = function () {
+    if (!pgState.msgs.length) { toast('对话还是空的', 'warn'); return; }
+    const txt = pgState.msgs.map(function (m) {
+      return (m.role === 'user' ? '我' : (m.role === 'error' ? '错误' : 'AI')) + '：' + m.content;
+    }).join('\n\n');
+    if (App.copyText) App.copyText(txt);
+    else toast('当前浏览器不支持一键复制', 'warn');
+  };
+
+  App.pgSend = async function () {
+    if (pgState.busy) return;
+    const inp = $('#pgInput');
+    if (!inp) return;
+    const text = inp.value.trim();
+    if (!text) return;
+    if (!pgState.model) { toast('请先选择一个模型', 'warn'); return; }
+
+    inp.value = '';
+    pgState.msgs.push({ role: 'user', content: text, time: nowHM() });
+    pgRenderMsgs();
+
+    const btn = $('#pgSendBtn');
+    pgState.busy = true;
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
+
+    // system 单独字段回传；history 只含 user/assistant
+    const history = pgState.msgs.filter(function (m) {
+      return m.role === 'user' || m.role === 'assistant';
+    }).map(function (m) { return { role: m.role, content: m.content }; });
+
+    let res;
+    try {
+      res = await POST('/api/playground/chat', {
+        model: pgState.model,
+        system: pgState.system || '',
+        messages: history,
+        temperature: pgState.temperature,
+        max_tokens: pgState.max_tokens || 0,
+      });
+    } catch (e) {
+      res = { code: 1, msg: '网络异常，请重试' };
+    }
+
+    pgState.busy = false;
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-send-fill"></i>'; }
+    if (gone('pgMsgs')) return;   // 已切走页面，丢弃过期结果
+
+    if (res.code !== 0) {
+      if (res.data && res.data.quota) { pgState.quota = res.data.quota; pgRenderQuota(); }
+      pgState.msgs.push({ role: 'error', content: (res.msg || '调用失败'), time: nowHM() });
+      pgRenderMsgs();
+      toast(res.msg || '调用失败', 'err');
+      return;
+    }
+
+    const d = res.data || {};
+    if (d.quota) { pgState.quota = d.quota; pgRenderQuota(); }
+    pgState.msgs.push({
+      role: 'assistant',
+      content: d.content || '',
+      time: nowHM(),
+      stat: {
+        model: d.model || pgState.model,
+        prompt: (d.usage && d.usage.prompt_tokens) || 0,
+        completion: (d.usage && d.usage.completion_tokens) || 0,
+        points: d.points || 0,
+        latency: d.latency_ms || 0,
+      },
+    });
+    pgRenderMsgs();
   };
 
   ROUTERS['ai'] = function (host) {

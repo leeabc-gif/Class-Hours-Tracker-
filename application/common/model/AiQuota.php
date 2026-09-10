@@ -152,14 +152,17 @@ class AiQuota extends Model
         $points = (float)$points;
         if ($points <= 0) return true;
 
+        // ThinkPHP 5.1 的 update() 不认 ['exp','field-1']（会抛 not support data:[exp]），
+        // 只支持 ['inc', n] / ['dec', n]。自增自减同样在 SQL 层完成，
+        // 配合 where balance>=? 保证「判断 + 扣减」是原子的，并发不会超扣。
         $affected = self::where('id', (int)$this->id)
             ->where('balance', '>=', $points)
             ->update([
-                'balance'      => ['exp', 'balance-' . $points],
-                'total_used'   => ['exp', 'total_used+' . $points],
-                'daily_used'   => ['exp', 'daily_used+' . $points],
-                'weekly_used'  => ['exp', 'weekly_used+' . $points],
-                'monthly_used' => ['exp', 'monthly_used+' . $points],
+                'balance'      => ['dec', $points],
+                'total_used'   => ['inc', $points],
+                'daily_used'   => ['inc', $points],
+                'weekly_used'  => ['inc', $points],
+                'monthly_used' => ['inc', $points],
                 'updated_at'   => time(),
             ]);
 
@@ -178,12 +181,12 @@ class AiQuota extends Model
             self::where('id', (int)$this->id)
                 ->where('balance', '>=', abs($amount))
                 ->update([
-                    'balance'    => ['exp', 'balance-' . abs($amount)],
+                    'balance'    => ['dec', abs($amount)],
                     'updated_at' => time(),
                 ]);
         } else {
             self::where('id', (int)$this->id)->update([
-                'balance'    => ['exp', 'balance+' . $amount],
+                'balance'    => ['inc', $amount],
                 'updated_at' => time(),
             ]);
         }
