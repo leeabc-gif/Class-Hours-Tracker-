@@ -1,4 +1,32 @@
-﻿## v1.1.0 · 2026-09-10 · AI 中转平台收尾 + 通知公告 + 课程表导入
+﻿## v1.1.1 · 2026-09-10 · 在线更新致命修复（There is no active transaction）
+
+### 修复
+- **致命：在线更新报 "There is no active transaction"**。根因：MySQL 的 DDL 会触发隐式提交，
+  v1.1.0 的 upgrade.sql 含 7 个 `CREATE TABLE`，第 1 条执行完事务就消失，随后 `commit()` 抛异常，
+  `catch` 里的 `rollBack()` 再抛同一句把真正原因彻底掩盖。修复（`application/common/service/UpdateService.php`）：
+  - 新增 `isImplicitCommitStatement()`：识别 CREATE/ALTER/DROP/TRUNCATE 等隐式提交语句
+  - **含 DDL 就不开事务**（开了也是假保护），纯 DML 才用事务保证原子性
+  - `commit()`/`rollBack()` 前一律复查 `inTransaction()`，杜绝二次异常掩盖真错
+  - 报错文案区分「已回滚数据库」与「DDL 已隐式提交、需用备份恢复」，并保留第 N 条语句 + SQLSTATE
+  - 回滚时执行 downgrade.sql 复用同一方法，同步获得修复
+- **修复历史版本号比较的语义化缺陷**：旧的 `CAST(cfg_value AS DECIMAL)` 只取到第一个小数点，
+  `'1.0.8'→1.000`、`'1.1.1'/'1.1.2'/'1.10.0'` 全部→`1.100`，会导致高版本站被降级改写。
+  v1.1.1 的版本同步 SQL 改为三段各补零到 4 位后字符串比较，
+  `1.10.0` 正确大于 `1.1.1`。（11/11 用例通过）
+- 强化「更新清单地址」误填 ZIP 的诊断：`Admin::settingsSave` 保存期拦截 `.zip`；
+  `UpdateService::check()` 早筛 `.zip`；`latest_version` 缺失的报错改为带诊断提示
+  （识别 ZIP URL / HTML 响应 / 空响应 / 非 JSON 四种）。
+
+### 数据库
+- 新增迁移 `20260910_v111_version_sync.sql`：为 1.0.x→1.1.1 直升场景幂等补齐 AI + 通知 7 张表，
+  并以**语义化版本比较**同步 `app_version → 1.1.1`（不会把更高版本改回来）。
+  从 1.1.0 升级时 CREATE TABLE 因 `IF NOT EXISTS` 不做任何事，仅写版本号。
+
+### 已知
+- 从低于 v1.1.1 的版本在线升级到此版本，依然需要先手工替换 `UpdateService.php` 再点更新
+  （因为执行升级的是旧代码）——这是"鸡生蛋"问题，单文件替换即可解决，见发布说明。
+
+## v1.1.0 · 2026-09-10 · AI 中转平台收尾 + 通知公告 + 课程表导入
 
 ### 新增
 - **AI 操练场（P2）**：教师/管理员可在「AI 操练场」自由选模型、调温度/最大输出、填系统提示词，实时看到 token 消耗、扣点、延迟与剩余额度；内置教案设计、试题生成、学情分析、代码讲解、公文通知、课堂导入等 7 个职教场景预设。
