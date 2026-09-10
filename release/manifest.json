@@ -1,19 +1,19 @@
 {
-    "latest_version": "1.1.0",
+    "latest_version": "1.1.1",
     "min_php": "7.4",
-    "published_at": "2026-09-10T03:50:58+00:00",
-    "changelog": "### 新增\n- **AI 操练场（P2）**：教师/管理员可在「AI 操练场」自由选模型、调温度/最大输出、填系统提示词，实时看到 token 消耗、扣点、延迟与剩余额度；内置教案设计、试题生成、学情分析、代码讲解、公文通知、课堂导入等 7 个职教场景预设。\n- **通知公告（P3a）**：管理员发布/编辑/置顶/下架/删除公告，支持通知与公告两类、全部/教师/管理员三种可见范围；教师端带未读红点与已读回执，可批量标记已读；管理员可查看某公告的已读人数与名单。\n- **课程表导入（P3b）**：教师可上传 CSV / Excel(.xlsx) 课表，系统自动解析（兼容 GBK/UTF-8、列顺序无关、表头中文+英文别名双匹配），预览核对后一键导入 `ks_lesson`，来源标记 `import`，导入后自动出现在「课表日历」。支持按日期反推周次、星期/节次文本归一化（如「周一」「5-8节」）、冲突自动跳过。无 PhpSpreadsheet 依赖，XLSX 用原生 ZipArchive + SimpleXML 解析。\n- 前端新增 `App.upload`（multipart 文件上传，自动携带 CSRF Token）。\n\n### 数据库\n- 新增迁移 `20260910_v110_version_sync.sql`：为老站幂等补齐 7 张 AI 表（`ks_ai_channel` / `ks_ai_model` / `ks_ai_token` / `ks_ai_quota` / `ks_ai_usage_log`）+ 2 张通知表（`ks_notice` / `ks_notice_read`），并同步 `app_version → 1.1.0`。\n- `ks_lesson.source` 枚举新增 `import`（课表导入）；无需新表。\n\n### 修复/打磨\n- `ScheduleParser` 兼容 XLSX 默认命名空间下属性需用 `attributes()` 读取的 SimpleXML 行为。\n- `Term::weekOf($term, $date)` 新增：按授课日期反推周次，导入缺周次行时使用。",
+    "published_at": "2026-09-10T05:35:42+00:00",
+    "changelog": "### 修复\n- **致命：在线更新报 \"There is no active transaction\"**。根因：MySQL 的 DDL 会触发隐式提交，\n  v1.1.0 的 upgrade.sql 含 7 个 `CREATE TABLE`，第 1 条执行完事务就消失，随后 `commit()` 抛异常，\n  `catch` 里的 `rollBack()` 再抛同一句把真正原因彻底掩盖。修复（`application/common/service/UpdateService.php`）：\n  - 新增 `isImplicitCommitStatement()`：识别 CREATE/ALTER/DROP/TRUNCATE 等隐式提交语句\n  - **含 DDL 就不开事务**（开了也是假保护），纯 DML 才用事务保证原子性\n  - `commit()`/`rollBack()` 前一律复查 `inTransaction()`，杜绝二次异常掩盖真错\n  - 报错文案区分「已回滚数据库」与「DDL 已隐式提交、需用备份恢复」，并保留第 N 条语句 + SQLSTATE\n  - 回滚时执行 downgrade.sql 复用同一方法，同步获得修复\n- **修复历史版本号比较的语义化缺陷**：旧的 `CAST(cfg_value AS DECIMAL)` 只取到第一个小数点，\n  `'1.0.8'→1.000`、`'1.1.1'/'1.1.2'/'1.10.0'` 全部→`1.100`，会导致高版本站被降级改写。\n  v1.1.1 的版本同步 SQL 改为三段各补零到 4 位后字符串比较，\n  `1.10.0` 正确大于 `1.1.1`。（11/11 用例通过）\n- 强化「更新清单地址」误填 ZIP 的诊断：`Admin::settingsSave` 保存期拦截 `.zip`；\n  `UpdateService::check()` 早筛 `.zip`；`latest_version` 缺失的报错改为带诊断提示\n  （识别 ZIP URL / HTML 响应 / 空响应 / 非 JSON 四种）。\n\n### 数据库\n- 新增迁移 `20260910_v111_version_sync.sql`：为 1.0.x→1.1.1 直升场景幂等补齐 AI + 通知 7 张表，\n  并以**语义化版本比较**同步 `app_version → 1.1.1`（不会把更高版本改回来）。\n  从 1.1.0 升级时 CREATE TABLE 因 `IF NOT EXISTS` 不做任何事，仅写版本号。\n\n### 已知\n- 从低于 v1.1.1 的版本在线升级到此版本，依然需要先手工替换 `UpdateService.php` 再点更新\n  （因为执行升级的是旧代码）——这是\"鸡生蛋\"问题，单文件替换即可解决，见发布说明。",
     "files": [
         {
-            "name": "keshi-1.1.0.zip",
-            "url": "https://cnb.cool/bmayan/class-hours-tracker/-/releases/download/v1.1.0/keshi-1.1.0.zip",
-            "sha256": "952d293f544ff2c390ddebe9ec9a93b92e85d18a0f30acb682b7251c62d92268",
-            "version": "1.1.0",
-            "size": 743968
+            "name": "keshi-1.1.1.zip",
+            "url": "https://cnb.cool/bmayan/class-hours-tracker/-/releases/download/v1.1.1/keshi-1.1.1.zip",
+            "sha256": "7a9a26605814d8ded3c1ca0a1e203c76fa51c0a6944641a3ef0e34fe2ac7e690",
+            "version": "1.1.1",
+            "size": 773688
         }
     ],
     "requires": {
         "from_version": "1.0.0"
     },
-    "signature": "lw2/B7BqE1hOhhJ3idl2DrS1JqeqGwCuCxfNLe9gvQRcqQbPOU5hgl+wVXsQRFjy+wJ7LgDl12DpKNBhEVHcv0kkjE4xviBiIqiZU51PRgFJ09CPOvOHO/FMJpgIUt+ae4KVBcMqGOK8ux8Zeriq5i8WNtclvcPEmh9++smLsmuwVozfg4t4f5k2qqAWvw1Yvv22TvtxWlUXkc4bUZZvrmfjYA2E80KIbTE7lye4+t5a0x3Qbb/OIpeH2/bEkLjE7BA4simI2sUGd+IaUrcGnNFfH9yizuYZ2Ejple4w55uI/RKy9lMmOQr84CfcROAA/v54xYb4ZkdLQvJ2szB4dg=="
+    "signature": "c+M1wq6QhZmVGu5mO2hu/etqLinYQVNPuy0Id3vPbZu7oD2htCPTXL86sv+3q6Qh4+aUY+aUxj081DeXnwfgMtudtFkHC5UPEkrJOLMr0qYisw2KpykJ0igZhWY9Zfg+VGcCCt05iLDI1x00Alu0TQy9PX4/cDlrrIGIQ9WAExgxb2lGiHUaHvi1TWmknt9tBzfxt1ZwyhMYT9rCTiF35ES5wGO0Yk09IfVILvopVa9dt0evClYBwPFIQHhDE6bLtkQ1xGxYaJp6H0hOp6UxGocb7NadySwJHAFADu4H1CngN+urgQ8MNYH6iYj38kmdqlIB18BcPJvWpf3x+UHOnQ=="
 }
