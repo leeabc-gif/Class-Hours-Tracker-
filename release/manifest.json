@@ -1,19 +1,19 @@
 {
-    "latest_version": "1.0.8",
+    "latest_version": "1.1.0",
     "min_php": "7.4",
-    "published_at": "2026-09-09T13:30:55+00:00",
-    "changelog": "### 新增\n- **节次选项扩展**：在原有 6 项（1-2 / 3-4 / 5-6 / 7-8 / 9-10 / 11-12 节）的基础上新增 4 项跨节组合 `1-4节 / 2-4节 / 5-8节 / 1-8节`，section 编号 7..10。覆盖上午四节连排、下午四节连排、全天 8 节连排等常见课表编排。\n- 前端 `app.js` 改为按 `MAX_SECTION=10` 常量循环渲染，列表/筛选/新建/编辑/批量 4 处下拉框一次性同步；`index.html` 缓存戳升至 `?v=20260909f` 防命中旧缓存。\n- 后端 `Lesson::SECTIONS` 增加 4 项；`Lesson::SECTION_MAX = 10` 常量集中维护；`LessonController` 的 `section > 6` 硬上限改为读取 `SECTION_MAX`，避免再因增减节次产生遗漏。\n- AI 解析引擎 `AiEngine::SECTION_MAP` 改为按\"起-止区间\"整体匹配（键如 `\"1-4\"`、`\"5-8\"`、`\"1-8\"`），新增 4 个区间一目了然；旧的\"只按起始节\"映射降级为兜底，向后兼容所有历史粘贴文本。\n\n### 数据库\n- 无 schema 变更；新增迁移 `20260909_v108_version_sync.sql` 仅同步 `ks_setting.app_version` 为 `1.0.8`。\n\n\n\n### 修复\n- **在线更新始终失败（核心）**：发布清单 `manifest.json` 记录的 `sha256`/`size` 与实际发布包不一致，导致下载后校验必然失败、升级中止。本次重新按统一规则打包并重新签名，保证清单与包严格对应。\n- **升级后版本号不推进**：CI 在准备 `upgrade.sql` 时未正确取到当前版本（GitHub 侧缺少 `VER` 变量、CNB 侧硬编码 `v1.0.5`），任何版本都打包 `v1.0.5` 的迁移，导致升级后版本号被写成 `1.0.5`、反复提示可更新。现改为优先精确匹配当前版本迁移，退路取最大版本。\n- **升级 SQL 执行报错**：`ks_setting` 表没有 `updated_at` 字段，但 `v1.0.5`/`v1.0.6` 迁移在写该列，执行时报 `Unknown column` 使升级回滚。已移除该赋值。\n- **发布清单 changelog 恒为空**：签名工具 `--changelog-file=` 参数偏移多算 1 位导致路径首字符被截、文件读不到；且 CHANGELOG 首行带 UTF-8 BOM 时正则匹配不到版本标题。均已修复。\n- **发布包残缺**：手工打包时只纳入了改动过的 8 个文件，跨版本升级/全新安装会缺文件。新增 `tools/build_release.php` 统一打包 300 个文件。\n\n### 新增\n- `tools/build_release.php`：与 CI 同一套白/黑名单的发布包构建工具，自动挑选当前版本 `upgrade.sql` 并输出 `sha256` 供签名。\n- 签名工具参数解析改为统一 `--key=value` 解析，避免手写字符串偏移再次出错。",
+    "published_at": "2026-09-10T03:50:58+00:00",
+    "changelog": "### 新增\n- **AI 操练场（P2）**：教师/管理员可在「AI 操练场」自由选模型、调温度/最大输出、填系统提示词，实时看到 token 消耗、扣点、延迟与剩余额度；内置教案设计、试题生成、学情分析、代码讲解、公文通知、课堂导入等 7 个职教场景预设。\n- **通知公告（P3a）**：管理员发布/编辑/置顶/下架/删除公告，支持通知与公告两类、全部/教师/管理员三种可见范围；教师端带未读红点与已读回执，可批量标记已读；管理员可查看某公告的已读人数与名单。\n- **课程表导入（P3b）**：教师可上传 CSV / Excel(.xlsx) 课表，系统自动解析（兼容 GBK/UTF-8、列顺序无关、表头中文+英文别名双匹配），预览核对后一键导入 `ks_lesson`，来源标记 `import`，导入后自动出现在「课表日历」。支持按日期反推周次、星期/节次文本归一化（如「周一」「5-8节」）、冲突自动跳过。无 PhpSpreadsheet 依赖，XLSX 用原生 ZipArchive + SimpleXML 解析。\n- 前端新增 `App.upload`（multipart 文件上传，自动携带 CSRF Token）。\n\n### 数据库\n- 新增迁移 `20260910_v110_version_sync.sql`：为老站幂等补齐 7 张 AI 表（`ks_ai_channel` / `ks_ai_model` / `ks_ai_token` / `ks_ai_quota` / `ks_ai_usage_log`）+ 2 张通知表（`ks_notice` / `ks_notice_read`），并同步 `app_version → 1.1.0`。\n- `ks_lesson.source` 枚举新增 `import`（课表导入）；无需新表。\n\n### 修复/打磨\n- `ScheduleParser` 兼容 XLSX 默认命名空间下属性需用 `attributes()` 读取的 SimpleXML 行为。\n- `Term::weekOf($term, $date)` 新增：按授课日期反推周次，导入缺周次行时使用。",
     "files": [
         {
-            "name": "keshi-1.0.8.zip",
-            "url": "https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/v1.0.8/keshi-1.0.8.zip",
-            "sha256": "ad5741a62ef9b892940a0be17664251962b36c6917f41018f56d4a14c4fe33e9",
-            "version": "1.0.8",
-            "size": 678561
+            "name": "keshi-1.1.0.zip",
+            "url": "https://cnb.cool/bmayan/class-hours-tracker/-/releases/download/v1.1.0/keshi-1.1.0.zip",
+            "sha256": "952d293f544ff2c390ddebe9ec9a93b92e85d18a0f30acb682b7251c62d92268",
+            "version": "1.1.0",
+            "size": 743968
         }
     ],
     "requires": {
         "from_version": "1.0.0"
     },
-    "signature": "m2g9SypbvwkkNdjp+CZcPsLSswG1wmoADGA5h4WZlJqWmG5PPZLEblsICofs2pJ64m3esKlNYVAa9ZZWRkdnG1aKj2L9WlW7XbCw0+Ke/PLM7IDlyhUc8X14FW6FCH9ETGGZdnsOUA/fEF245q0T/WDD2NBhzwglZ8yNM9L4FuHLobWmoP4mMgedSRmNr0uhFktulEmrvNgURy6tgU+5ttvqmnbIggwPL1mWyvSw6ajaCeWHl6HHP7iaXar/UtxHp9hYUCBpMq6vDLNy0Xwc+cHFD/uCe3HovtJHRr+5SYymIlzP+bbVw2aI/i9c8iHsO2G9H2d7FAJbfYy6NX/b7w=="
+    "signature": "lw2/B7BqE1hOhhJ3idl2DrS1JqeqGwCuCxfNLe9gvQRcqQbPOU5hgl+wVXsQRFjy+wJ7LgDl12DpKNBhEVHcv0kkjE4xviBiIqiZU51PRgFJ09CPOvOHO/FMJpgIUt+ae4KVBcMqGOK8ux8Zeriq5i8WNtclvcPEmh9++smLsmuwVozfg4t4f5k2qqAWvw1Yvv22TvtxWlUXkc4bUZZvrmfjYA2E80KIbTE7lye4+t5a0x3Qbb/OIpeH2/bEkLjE7BA4simI2sUGd+IaUrcGnNFfH9yizuYZ2Ejple4w55uI/RKy9lMmOQr84CfcROAA/v54xYb4ZkdLQvJ2szB4dg=="
 }

@@ -53,6 +53,7 @@ $opts         = [
     'changelog_file'  => '',
     'min_php'         => '',
     'from_version'    => '',
+    'download_base'   => '',
 ];
 // 统一解析 --key=value（不再手写字符串偏移，避免 "吃掉首字符" 类偏移 bug）
 foreach ($args as $a) {
@@ -89,6 +90,13 @@ if ($ciMode) {
         $changelog = extractChangelogSection((string) file_get_contents($opts['changelog_file']), $version);
     }
 
+    // 下载地址：默认 GitHub；指定 --download-base 时拼 CNB 等自建源
+    // 形如 https://cnb.cool/<repo>/-/releases/download
+    $downloadBase = rtrim($opts['download_base'], '/');
+    $fileUrl = $downloadBase !== ''
+        ? $downloadBase . '/' . $tag . '/' . $assetName
+        : 'https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/' . $tag . '/' . $assetName;
+
     $data = [
         'latest_version' => $version,
         'min_php'        => $opts['min_php'] !== '' ? $opts['min_php'] : '7.4',
@@ -97,7 +105,7 @@ if ($ciMode) {
         'files'          => [
             [
                 'name'    => $assetName,
-                'url'     => 'https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/' . $tag . '/' . $assetName,
+                'url'     => $fileUrl,
                 'sha256'  => $hash,
                 'version' => $version,
                 'size'    => $size,
