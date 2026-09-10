@@ -76,6 +76,11 @@ $excludePrefixes = [
     'tools/sign_manifest.php',
 ];
 
+// 通用规则：顶层任何以 "_" 开头的目录/文件都是本地工作区产物（_env、_hotfix_upload、
+// _update_priv.pem 等），一律不进发布包。v1.1.1 打包时曾因固定清单漏掉 _hotfix_upload/
+// 导致临时热修文件被打进包里，故补此兜底规则。
+$excludeTopUnderscore = true;
+
 $outZip = $out !== '' ? $out : ($root . "/release/keshi-{$version}.zip");
 if (!is_dir(dirname($outZip))) {
     @mkdir(dirname($outZip), 0755, true);
@@ -109,6 +114,9 @@ foreach ($iterator as $path => $info) {
         }
     }
     if ($skip) continue;
+
+    // 顶层 "_" 前缀一律排除（本地工作区产物）
+    if ($excludeTopUnderscore && strpos($rel, '_') === 0) continue;
 
     if ($info->isDir()) {
         // 目录项：保持与 Linux zip 一致的尾斜杠

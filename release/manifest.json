@@ -1,19 +1,19 @@
 {
     "latest_version": "1.1.1",
     "min_php": "7.4",
-    "published_at": "2026-09-10T05:35:42+00:00",
+    "published_at": "2026-09-10T05:50:55+00:00",
     "changelog": "### 修复\n- **致命：在线更新报 \"There is no active transaction\"**。根因：MySQL 的 DDL 会触发隐式提交，\n  v1.1.0 的 upgrade.sql 含 7 个 `CREATE TABLE`，第 1 条执行完事务就消失，随后 `commit()` 抛异常，\n  `catch` 里的 `rollBack()` 再抛同一句把真正原因彻底掩盖。修复（`application/common/service/UpdateService.php`）：\n  - 新增 `isImplicitCommitStatement()`：识别 CREATE/ALTER/DROP/TRUNCATE 等隐式提交语句\n  - **含 DDL 就不开事务**（开了也是假保护），纯 DML 才用事务保证原子性\n  - `commit()`/`rollBack()` 前一律复查 `inTransaction()`，杜绝二次异常掩盖真错\n  - 报错文案区分「已回滚数据库」与「DDL 已隐式提交、需用备份恢复」，并保留第 N 条语句 + SQLSTATE\n  - 回滚时执行 downgrade.sql 复用同一方法，同步获得修复\n- **修复历史版本号比较的语义化缺陷**：旧的 `CAST(cfg_value AS DECIMAL)` 只取到第一个小数点，\n  `'1.0.8'→1.000`、`'1.1.1'/'1.1.2'/'1.10.0'` 全部→`1.100`，会导致高版本站被降级改写。\n  v1.1.1 的版本同步 SQL 改为三段各补零到 4 位后字符串比较，\n  `1.10.0` 正确大于 `1.1.1`。（11/11 用例通过）\n- 强化「更新清单地址」误填 ZIP 的诊断：`Admin::settingsSave` 保存期拦截 `.zip`；\n  `UpdateService::check()` 早筛 `.zip`；`latest_version` 缺失的报错改为带诊断提示\n  （识别 ZIP URL / HTML 响应 / 空响应 / 非 JSON 四种）。\n\n### 数据库\n- 新增迁移 `20260910_v111_version_sync.sql`：为 1.0.x→1.1.1 直升场景幂等补齐 AI + 通知 7 张表，\n  并以**语义化版本比较**同步 `app_version → 1.1.1`（不会把更高版本改回来）。\n  从 1.1.0 升级时 CREATE TABLE 因 `IF NOT EXISTS` 不做任何事，仅写版本号。\n\n### 已知\n- 从低于 v1.1.1 的版本在线升级到此版本，依然需要先手工替换 `UpdateService.php` 再点更新\n  （因为执行升级的是旧代码）——这是\"鸡生蛋\"问题，单文件替换即可解决，见发布说明。",
     "files": [
         {
             "name": "keshi-1.1.1.zip",
             "url": "https://cnb.cool/bmayan/class-hours-tracker/-/releases/download/v1.1.1/keshi-1.1.1.zip",
-            "sha256": "7a9a26605814d8ded3c1ca0a1e203c76fa51c0a6944641a3ef0e34fe2ac7e690",
+            "sha256": "abe38ba595ee2d26d39bd4979c1799cf28eb7a5ef806681b3765974814cefbc6",
             "version": "1.1.1",
-            "size": 773688
+            "size": 755855
         }
     ],
     "requires": {
         "from_version": "1.0.0"
     },
-    "signature": "c+M1wq6QhZmVGu5mO2hu/etqLinYQVNPuy0Id3vPbZu7oD2htCPTXL86sv+3q6Qh4+aUY+aUxj081DeXnwfgMtudtFkHC5UPEkrJOLMr0qYisw2KpykJ0igZhWY9Zfg+VGcCCt05iLDI1x00Alu0TQy9PX4/cDlrrIGIQ9WAExgxb2lGiHUaHvi1TWmknt9tBzfxt1ZwyhMYT9rCTiF35ES5wGO0Yk09IfVILvopVa9dt0evClYBwPFIQHhDE6bLtkQ1xGxYaJp6H0hOp6UxGocb7NadySwJHAFADu4H1CngN+urgQ8MNYH6iYj38kmdqlIB18BcPJvWpf3x+UHOnQ=="
+    "signature": "JdnefnZa8LV7BdrW2qBkmVlkqVRkNlt1HILKN9HXPpN0TxftKrn+UbVNAbP17caUhq2o+NKvoYOXI8ulSYoKSZ9TLmTmClot6sexGIT+mw8gPr8w0Xm5Livxx2YJBefEnXHfJVAx7R6cIGhdddj2M8koQkwxTmaJc4tbqsJaFf15YrmVmI2ZGW8FytyjaG46+K/jyDM0ll7mUkTLkWYKKrCKhAH1lK6l7FZ9BPmb8as8b91TfmpYtFln5oNtt+ye756okNEas0ZKRXN6TXr7g9APMBLElDt9zuk3u5p/t6oZEs21KGNJ+kIPRCngabCD6pxWiNVCDs7NxI54M/tbtg=="
 }
