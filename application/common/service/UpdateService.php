@@ -87,6 +87,14 @@ class UpdateService
     public static function check($manifestUrl)
     {
         $manifestUrl = self::validateRemoteUrl($manifestUrl, '更新清单地址');
+        // 早筛：清单地址不可以是 ZIP 包地址（常见误操作：从发布页复制了更新包下载链接）
+        $mp = parse_url($manifestUrl, PHP_URL_PATH);
+        if (is_string($mp) && stripos($mp, '.zip') !== false) {
+            throw new \RuntimeException(
+                '更新清单地址看起来是更新包(ZIP)地址，请改成 manifest.json 的地址'
+                . '（形如 https://<host>/.../releases/download/v<版本>/manifest.json）。'
+            );
+        }
         // 链式解析：先识别 GitHub /releases/latest，再识别 CNB /-/releases/latest，
         // 命中其一就把"latest"入口 URL 改写为带具体 tag 的 manifest 直链。
         list($manifestUrl, $resolvedTag, $sourceKind) = self::resolveManifestEntry($manifestUrl);
@@ -114,7 +122,25 @@ class UpdateService
         }
         $data = json_decode($json, true);
         if (!is_array($data) || empty($data['latest_version'])) {
-            throw new \RuntimeException('更新清单格式不正确：缺少 latest_version。');
+            // 诊断：到底是 URL 填错了，还是服务器返回了非 JSON？给出可直接照着改的提示
+            $hint = '';
+            $mp = parse_url($manifestUrl, PHP_URL_PATH);
+            if (is_string($mp) && stripos($mp, '.zip') !== false) {
+                $hint = '您填的 URL 看起来是更新包(ZIP)地址，清单(manifest.json)地址才有效，'
+                      . '正确形如：https://<host>/.../releases/download/v<版本>/manifest.json';
+            } else {
+                $trim = ltrim((string) $json);
+                if ($trim !== '' && ($trim[0] === '<' || stripos($trim, '<!doctype') === 0 || stripos($trim, '<html') === 0)) {
+                    $hint = '服务器返回了 HTML 页面而非 JSON 清单。可能是：清单地址 404、被重定向到登录页，或把发布页 HTML 当成清单了。';
+                } elseif ($trim === '') {
+                    $hint = '服务器返回了空内容。';
+                } elseif (!is_array($data)) {
+                    $hint = '服务器返回的内容不是合法 JSON（可能填了 ZIP 包地址、或上游返回了错误页）。';
+                }
+            }
+            throw new \RuntimeException(
+                '更新清单格式不正确：缺少 latest_version。' . ($hint !== '' ? '提示：' . $hint : '')
+            );
         }
         // 验签：清单若含 signature 则强校验；发布侧应在受控 HTTPS 源上签名
         if (!self::verifyManifestSignature($data)) {
@@ -300,6 +326,14 @@ class UpdateService
         }
         if (strlen($url) > 1000) {
             throw new \RuntimeException('更新清单地址不能超过 1000 个字符。');
+        }
+        // 防止把更新包(ZIP)地址错填进清单地址：清单必须是 manifest.json
+        $mp = parse_url($url, PHP_URL_PATH);
+        if (is_string($mp) && stripos($mp, '.zip') !== false) {
+            throw new \RuntimeException(
+                '更新清单地址不能是更新包(ZIP)地址，请填 manifest.json 的地址'
+                . '（形如 https://<host>/.../releases/download/v<版本>/manifest.json）。'
+            );
         }
         // 复用严格 SSRF 校验（IP/host 名/私网/保留段）
         self::validateRemoteUrl($url, '更新清单地址');

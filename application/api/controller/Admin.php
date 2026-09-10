@@ -965,6 +965,11 @@ class Admin extends Base
                 if (strlen($value) > 1000) {
                     return $this->fail('更新清单地址不能超过 1000 个字符');
                 }
+                // 防止把更新包(ZIP)地址误存为清单地址
+                $mp = parse_url($value, PHP_URL_PATH);
+                if (is_string($mp) && stripos($mp, '.zip') !== false) {
+                    return $this->fail('更新清单地址不能是更新包(ZIP)地址，请填 manifest.json 的地址（形如 .../releases/download/v<版本>/manifest.json）');
+                }
                 // 写入前调用 UpdateService 做一次轻量校验，避免脏数据落库
                 try {
                     \app\common\service\UpdateService::validateManifestUrl($value);
