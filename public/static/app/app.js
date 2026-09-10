@@ -3393,25 +3393,58 @@
     host.innerHTML=`
     <div class="row g-3">
       <div class="col-12 col-lg-7">
-        <div class="card mb-3"><div class="card-h"><i class="bi bi-arrow-repeat text-primary"></i><span class="tt">系统在线更新</span></div>
+        <div class="card mb-3"><div class="card-h"><i class="bi bi-arrow-repeat text-primary"></i><span class="tt">系统在线更新</span>
+          <div class="flex-grow-1"></div>
+          <button class="btn btn-sm btn-link text-muted p-0" title="重新检查" onclick="KS.updateCheck()"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
         <div class="card-b">
-          <div class="row g-2 mb-3">
-            <div class="col-6"><label class="form-label">当前已安装版本</label><div class="fs-4 fw-bold" id="udCurrent">—</div><div class="small text-muted">代码基线 <span id="udBaseline">—</span></div></div>
-            <div class="col-6"><label class="form-label">最新版本</label><div class="fs-4 fw-bold text-success" id="udLatest">—</div><div class="small text-muted" id="udLastCheck"></div></div>
+          <!-- v1.1.2：版本主卡片。进页面自动检查，有新版直接出横幅 + 立即更新按钮 -->
+          <div class="text-center py-2">
+            <div class="small text-muted">当前版本</div>
+            <div class="display-6 fw-bold lh-1 my-1" id="udCurrent">—</div>
+            <div class="small text-muted">最新版本：<span id="udLatest">检查中…</span></div>
           </div>
-          <div class="small text-danger d-none" id="udLastErr" style="word-break:break-all"></div>
-          <div class="small text-muted mb-2">PHP <span id="udPhpVer">—</span></div>
-          <div class="mb-3"><label class="form-label">更新清单地址 (manifest.json)</label>
-            <input id="udManifest" class="form-control" placeholder="https://update.example.com/manifest.json"></div>
-          <div class="small text-muted mb-2" id="udChangelog"></div>
-          <div class="alert alert-warning py-2 small mb-2">更新会先备份当前文件与整库，升级失败会自动回滚。升级期间系统进入极短维护模式，请勿刷新或关闭页面。</div>
-          <div class="d-flex gap-2 flex-wrap">
-            <button class="btn btn-outline-secondary" onclick="KS.updateRefresh()"><i class="bi bi-arrow-clockwise me-1"></i>读取状态</button>
-            <button class="btn btn-outline-primary" onclick="KS.updateCheck()"><i class="bi bi-search me-1"></i>检查更新</button>
-            <button class="btn btn-primary" onclick="KS.updateInstall()"><i class="bi bi-rocket-takeoff me-1"></i>一键升级</button>
-            <button class="btn btn-outline-danger ms-auto" onclick="KS.maintenanceToggle()"><i class="bi bi-moon-stars me-1"></i><span id="udMaintBtn">维护模式</span></button>
+          <div class="small text-danger text-center d-none mb-2" id="udLastErr" style="word-break:break-all"></div>
+
+          <!-- 有新版本时显示 -->
+          <div id="udNewBox" class="d-none">
+            <div class="alert alert-warning d-flex align-items-center gap-2 py-2 mb-2">
+              <i class="bi bi-download fs-5"></i>
+              <div><b>有新版本可用！</b><div class="small" id="udNewVer"></div></div>
+            </div>
+            <button class="btn btn-primary btn-lg w-100 mb-2" onclick="KS.updateInstall()">
+              <i class="bi bi-download me-1"></i>立即更新
+            </button>
           </div>
-          <div class="small text-muted mt-2" id="udSourceHint">更新源：—</div>
+          <!-- 已是最新时显示 -->
+          <div id="udOkBox" class="d-none">
+            <div class="alert alert-success d-flex align-items-center gap-2 py-2 mb-2">
+              <i class="bi bi-check-circle fs-5"></i><div>已是最新版本</div>
+            </div>
+          </div>
+
+          <div class="text-center mb-2">
+            <a href="javascript:;" class="small text-decoration-none" onclick="KS.updateToggleAdv()">
+              <span id="udAdvLabel">查看更新日志与高级选项</span> <i class="bi bi-chevron-down"></i>
+            </a>
+          </div>
+
+          <!-- 高级选项：默认折叠，普通用户不用碰 -->
+          <div id="udAdv" class="d-none border-top pt-3">
+            <div class="small text-muted mb-2">代码基线 <span id="udBaseline">—</span>　·　PHP <span id="udPhpVer">—</span>　·　<span id="udLastCheck"></span></div>
+            <div class="mb-3"><label class="form-label">更新清单地址 (manifest.json)</label>
+              <input id="udManifest" class="form-control form-control-sm" placeholder="留空则使用系统设置里的默认更新源">
+              <div class="form-text">一般无需填写。留空时自动使用「系统设置 → 在线更新源」配置的地址。</div></div>
+            <div class="small text-muted mb-2" id="udChangelog"></div>
+            <div class="alert alert-warning py-2 small mb-2">更新会先备份当前文件与整库，升级失败会自动回滚。升级期间系统进入极短维护模式，请勿刷新或关闭页面。</div>
+            <div class="d-flex gap-2 flex-wrap">
+              <button class="btn btn-sm btn-outline-secondary" onclick="KS.updateRefresh()"><i class="bi bi-arrow-clockwise me-1"></i>读取状态</button>
+              <button class="btn btn-sm btn-outline-primary" onclick="KS.updateCheck()"><i class="bi bi-search me-1"></i>检查更新</button>
+              <button class="btn btn-sm btn-outline-primary" onclick="KS.updateInstall()"><i class="bi bi-rocket-takeoff me-1"></i>一键升级</button>
+              <button class="btn btn-sm btn-outline-danger ms-auto" onclick="KS.maintenanceToggle()"><i class="bi bi-moon-stars me-1"></i><span id="udMaintBtn">维护模式</span></button>
+            </div>
+            <div class="small text-muted mt-2" id="udSourceHint">更新源：—</div>
+          </div>
           <div id="udResult" class="mt-3"></div>
         </div></div>
         <div class="card mb-3"><div class="card-h"><i class="bi bi-archive text-primary"></i><span class="tt">备份与回滚</span>
@@ -3435,20 +3468,44 @@
         </div></div>
       </div>
     </div>`;
-    updateLoadStatus();
+    updateLoadStatus(true);
   };
   function fmtSize(b){ b=Number(b)||0; if(b>=1048576)return (b/1048576).toFixed(1)+' MB'; if(b>=1024)return (b/1024).toFixed(1)+' KB'; return b+' B'; }
-  async function updateLoadStatus(){
-    const res=await GET('/api/admin/updateStatus');
+  // v1.1.2：高级选项折叠开关
+  App.updateToggleAdv=function(){
+    const box=$('#udAdv'), lab=$('#udAdvLabel'); if(!box) return;
+    const hidden=box.classList.contains('d-none');
+    box.classList.toggle('d-none', !hidden);
+    if(lab) lab.textContent = hidden ? '收起高级选项' : '查看更新日志与高级选项';
+  };
+  // v1.1.2：根据后端给的 update_available 渲染「有新版本 / 已最新」两种形态
+  function udRenderVersionBox(d){
+    const nb=$('#udNewBox'), ok=$('#udOkBox'), nv=$('#udNewVer');
+    if(!nb||!ok) return;
+    const latest=d.latest_version||'';
+    if(d.update_available && latest){
+      if(nv) nv.textContent='v'+latest;
+      nb.classList.remove('d-none'); ok.classList.add('d-none');
+    }else if(latest){
+      nb.classList.add('d-none'); ok.classList.remove('d-none');
+    }else{
+      // 还没检查出结果（或检查失败）：两个都不显示，靠 udLastErr 提示
+      nb.classList.add('d-none'); ok.classList.add('d-none');
+    }
+  }
+  // auto=true 时让后端顺便做一次静默检查（进页面即可看到新版本提示）
+  async function updateLoadStatus(auto){
+    const res=await GET('/api/admin/updateStatus'+(auto?'?auto=1':''));
     if(res.code!==0){ if($('#udCurrent')) $('#udCurrent').textContent='—'; return; }
     const d=res.data||{};
-    if($('#udCurrent')) $('#udCurrent').textContent=d.current_version||'—';
-    if($('#udManifest')) $('#udManifest').value=d.manifest_url||'';
+    if($('#udCurrent')) $('#udCurrent').textContent=d.current_version?('v'+d.current_version):'—';
+    if($('#udManifest')) $('#udManifest').value=d.manifest_url_custom||'';
     if($('#udMaintBtn')) $('#udMaintBtn').textContent=d.maintenance?'维护中(关闭)':'进入维护模式';
-    if($('#udLatest') && d.latest_version) $('#udLatest').textContent=d.latest_version;
+    if($('#udLatest')) $('#udLatest').textContent=d.latest_version?('v'+d.latest_version):'—';
     if($('#udBaseline') && d.app_version_baseline) $('#udBaseline').textContent=d.app_version_baseline;
     if($('#udPhpVer') && d.php_version) $('#udPhpVer').textContent=d.php_version;
     if($('#udLastCheck') && d.last_check_at) $('#udLastCheck').textContent='上次检查：'+d.last_check_at;
+    udRenderVersionBox(d);
     // v1.0.3：失败原因在版本号卡片下方红字小字展示，避免「最新版本 —」让人摸不着头脑
     const udErr=$('#udLastErr');
     if(udErr){
@@ -3487,14 +3544,16 @@
   }
   function setUdBusy(busy){
     ['udManifest'].forEach(id=>{ const el=$('#'+id); if(el) el.disabled=busy; });
-    const defs={updateRefresh:'读取状态',updateCheck:'检查更新',updateInstall:'一键升级'};
+    const defs={updateRefresh:'读取状态',updateCheck:'检查更新',updateInstall:'更新'};
+    // v1.1.2：同名动作现在有多个按钮（主区「立即更新」+ 高级区「一键升级」），
+    // 必须用 querySelectorAll 全量处理，否则只有第一个进入加载态、其余仍可重复点击。
     Object.keys(defs).forEach(k=>{
-      const el=document.querySelector('[onclick="KS.'+k+'()"]'); if(!el) return;
-      if (el.dataset.oh === undefined) el.dataset.oh = el.innerHTML; // 记住原始文案，结束时还原
-      if (busy) { el.disabled = true; el.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>' + defs[k] + '中…'; }
-      else { el.disabled = false; el.innerHTML = el.dataset.oh; }
+      document.querySelectorAll('[onclick="KS.'+k+'()"]').forEach(el=>{
+        if (el.dataset.oh === undefined) el.dataset.oh = el.innerHTML; // 记住原始文案，结束时还原
+        if (busy) { el.disabled = true; el.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>' + defs[k] + '中…'; }
+        else { el.disabled = false; el.innerHTML = el.dataset.oh; }
+      });
     });
-    if(!busy){ const t=$('#udLatest'); if(t && t.dataset.label){ /* noop */ } }
   }
   function udOut(html,cls){
     const box=$('#udResult'); if(!box)return;
@@ -3503,27 +3562,28 @@
   }
   App.updateRefresh=async function(){ setUdBusy(true); await updateLoadStatus(); };
   App.updateCheck=async function(){
-    const m=($('#udManifest').value||'').trim();
-    if(!m){ toast('请先填写更新清单地址','warn'); return; }
+    const m=($('#udManifest')? $('#udManifest').value||'' : '').trim();
+    // v1.1.2：留空即使用系统默认源，不再强要求填写
     setUdBusy(true); udOut('正在检查更新…');
     const res=await POST('/api/admin/updateCheck',{manifest_url:m});
     setUdBusy(false);
     if(res.code!==0){ udOut('<i class="bi bi-x-circle me-1"></i>'+esc(res.msg),'alert-danger'); return; }
     const d=res.data||{};
-    if($('#udLatest')) $('#udLatest').textContent=d.latest_version||'—';
+    if($('#udLatest')) $('#udLatest').textContent=d.latest_version?('v'+d.latest_version):'—';
     const can=d.update_available;
     udOut(
-      (can?'<i class="bi bi-arrow-up-circle me-1"></i><b>发现新版本 '+esc(d.latest_version)+'</b>（当前 '+esc(d.current_version)+'）'
-        :'<i class="bi bi-check-circle me-1"></i>当前已是最新版本 '+esc(d.current_version||'')+'')+
+      (can?'<i class="bi bi-arrow-up-circle me-1"></i><b>发现新版本 v'+esc(d.latest_version)+'</b>（当前 v'+esc(d.current_version)+'）'
+        :'<i class="bi bi-check-circle me-1"></i>当前已是最新版本 v'+esc(d.current_version||'')+'')+
       (d.changelog?'<div class="small mt-2"><b>更新说明：</b>'+esc(d.changelog)+'</div>':'')+
       (d.min_php?'<div class="small mt-1 text-muted">要求 PHP &ge; '+esc(d.min_php)+'</div>':'')
       , can?'alert-success':'alert-secondary');
     if(can){ $('#udResult').style.display=''; }
     if($('#udLastCheck')) $('#udLastCheck').textContent='上次检查：'+esc(d.checked_at||new Date().toLocaleString());
+    // 同步刷新版本卡片（新增可用态）
+    udRenderVersionBox(d);
   };
   App.updateInstall=async function(){
-    const m=($('#udManifest').value||'').trim();
-    if(!m){ toast('请先填写更新清单地址','warn'); return; }
+    const m=($('#udManifest')? $('#udManifest').value||'' : '').trim();
     if(!confirm('确定执行在线升级？将备份文件与数据库并进入短暂维护，升级过程请勿关闭页面。')) return;
     setUdBusy(true); udOut('<i class="bi bi-hourglass-split me-1"></i>正在下载并校验更新包…','alert-warning');
     const res=await POST('/api/admin/updateInstall',{manifest_url:m});
@@ -3533,7 +3593,7 @@
     udOut('<i class="bi bi-check-circle me-1"></i><b>升级成功</b> '+esc(d.from||'')+' → '+esc(d.to||'')
       +'<div class="small mt-1">备份文件 '+((d.backup&&d.backup.files)||0)+' 个；数据库备份 '+((d.db_backup&&d.db_backup.tables)||0)+' 表。</div>'
       +'<div class="small mt-1 text-muted">建议刷新页面确认新版生效。</div>','alert-success');
-    if($('#udCurrent')) $('#udCurrent').textContent=(d.to||'');
+    if($('#udCurrent')) $('#udCurrent').textContent=d.to?('v'+d.to):'';
     updateLoadStatus();
   };
   App.updateRollback=async function(){

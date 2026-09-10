@@ -1,4 +1,34 @@
-﻿## v1.1.1 · 2026-09-10 · 在线更新致命修复（There is no active transaction）
+﻿## v1.1.2 · 2026-09-10 · 后台更新页改造（自动检查 + 一键更新）
+
+### 改进
+- **进「系统更新」页自动检查新版本**，不必再手动点「检查更新」。
+  `updateStatus` 新增 `?auto=1`：距上次检查超过 6 小时（或从未检查）就静默拉一次远程清单；
+  自动检查失败只写 `last_check_error`，绝不影响状态接口本身返回。
+- **有新版本时直接显示「有新版本可用！」横幅 + 大号「立即更新」按钮**，点一下就升级。
+  已是最新则显示绿色「已是最新版本」。`updateStatus` 新增返回 `update_available`，
+  由后端统一做 `version_compare`，前端不再自己比字符串。
+- **更新清单地址不再强制填写**。输入框只回填管理员自定义值，留空即自动使用系统默认更新源；
+  `updateCheck` / `updateInstall` 前端也去掉了"请先填写更新清单地址"的拦截
+  （后端本来就支持留空回落到 `resolveManifestUrl()`）。
+- 界面重排：版本号做成居中主卡片，读取状态/检查更新/一键升级/维护模式等收进
+  「查看更新日志与高级选项」折叠区，普通管理员只需要面对一个按钮。
+
+### 修复
+- **默认 CNB 更新源不再写死到具体 tag**。v1.0.8 起因 CNB 的 latest/download 直链会 404，
+  默认源被写死成 `.../download/v1.0.8/manifest.json`，导致装了老版本的站
+  **永远发现不了后续新版本**。现改回 latest 入口，由 `UpdateService::resolveCnbLatest()`
+  抓 `/-/releases` 列表（匿名可访问、返回 JSON）自动挑最新 tag。
+- `setUdBusy()` 原先用 `querySelector` 只处理第一个匹配按钮；现在主区「立即更新」与
+  高级区「一键升级」是两个按钮，改用 `querySelectorAll` 全量禁用，避免升级期间重复点击。
+
+### 数据库
+- 新增迁移 `20260910_v112_version_sync.sql`：
+  - 清理历史写死的官方 CNB 清单地址（`.../download/v1.x.x/manifest.json`），让其回落到新的
+    latest 入口；**只清官方写死值**，管理员自定义地址与其他仓库地址一律不动（7/7 用例通过）。
+  - 以语义化版本比较同步 `app_version → 1.1.2`（11/11 用例通过，`1.10.0`/`2.0.0` 不会被降级）。
+  - 保留 7 个 `CREATE TABLE IF NOT EXISTS` 以兼容 1.0.x 直升。
+
+## v1.1.1 · 2026-09-10 · 在线更新致命修复（There is no active transaction）
 
 ### 修复
 - **致命：在线更新报 "There is no active transaction"**。根因：MySQL 的 DDL 会触发隐式提交，

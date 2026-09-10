@@ -863,11 +863,18 @@ class Admin extends Base
     }
 
     /**
-     * CNB 官方 Release 默认 URL（v1.0.8 起直接指向 tag manifest，避免 latest/download 在 is_latest=false 时 404）
+     * CNB 官方 Release 默认 URL
+     *
+     * v1.0.8 曾写死为具体 tag（.../download/v1.0.8/manifest.json），因为当时
+     * CNB 的 latest/download 直链在 is_latest=false 时会 404。
+     * v1.1.2 起改回 latest 入口：UpdateService::resolveCnbLatest() 会抓
+     * <owner>/<repo>/-/releases 列表（匿名可访问、返回 JSON）自动挑出最大版本号 tag，
+     * 再拼成 .../download/<tag>/manifest.json。这样发新版无需再改这里的硬编码，
+     * 用户后台才能"自动发现新版本 → 直接点更新"。
      */
     public static function defaultCnbManifestUrl()
     {
-        return 'https://cnb.cool/bmayan/class-hours-tracker/-/releases/download/v1.0.8/manifest.json';
+        return 'https://cnb.cool/bmayan/class-hours-tracker/-/releases/latest/download/manifest.json';
     }
 
     /**
@@ -1061,14 +1068,32 @@ class Admin extends Base
 
     /**
      * 更新状态：当前版本 / 维护模式 / 更新源地址
+     *
+     * v1.1.2：支持 ?auto=1 静默自动检查。前端进入"系统更新"页时带上该参数，
+     * 若距上次检查已超过 6 小时（或从未检查过），就顺手拉一次远程清单，
+     * 这样用户一进页面就能看到"有新版本可用"，不必先手动点"检查更新"。
+     * 自动检查失败只记录 last_check_error，绝不让 updateStatus 整体失败。
      */
     public function updateStatus()
     {
+        // 自动检查（静默、失败不影响状态返回）
+        if ((string) $this->input('auto', '') === '1') {
+            $this->autoCheckIfStale();
+        }
+
         $cachedLatest = (string) Setting::get('update_last_check_latest', '');
         $cachedTime   = (string) Setting::get('update_last_check_at', '');
         $cachedError  = (string) Setting::get('update_last_check_error', '');
+        $current      = UpdateService::currentVersion();
+
+        // v1.1.2：后端直接算出"是否有新版本"，前端不用自己比字符串
+        $updateAvailable = false;
+        if ($cachedLatest !== '' && $current !== '') {
+            $updateAvailable = version_compare($cachedLatest, $current, '>');
+        }
+
         return $this->ok([
-            'current_version'   => UpdateService::currentVersion(),
+            'current_version'   => $current,
             'maintenance'       => Base::underMaintenance(),
             'manifest_url'      => self::resolveManifestUrl(),
             'manifest_url_custom' => (string) Setting::get('update_manifest_url', ''),
@@ -1082,8 +1107,42 @@ class Admin extends Base
             'last_check_at'     => $cachedTime,
             // v1.0.3：失败原因，让顶部直接显示为什么「最新版本」是 —
             'last_check_error'  => $cachedError,
+            // v1.1.2：给前端渲染"有新版本可用"横幅用
+            'update_available'  => $updateAvailable,
         ]);
     }
+
+    /**
+     * 距上次检查超过 TTL 就静默拉一次远程清单，用于进页面自动提示新版本。
+     * 任何异常都吞掉（只写 last_check_error），不能影响 updateStatus 主流程。
+     */
+    protected function autoCheckIfStale($ttlSeconds = 21600)
+    {
+        try {
+            $lastAt = (string) Setting::get('update_last_check_at', '');
+            if ($lastAt !== '') {
+                $ts = strtotime($lastAt);
+                if ($ts && (time() - $ts) < $ttlSeconds) {
+                    return; // 还新鲜，不重复请求远端
+                }
+            }
+            $manifestUrl = self::resolveManifestUrl();
+            if ($manifestUrl === '') return;
+
+            UpdateService::setBearerToken((string) Setting::get('update_github_token', ''));
+            $info = UpdateService::check($manifestUrl);
+            Setting::set('update_last_check_latest', (string) $info['latest_version']);
+            Setting::set('update_last_check_at', (string) $info['checked_at']);
+            Setting::set('update_last_check_error', '');
+        } catch (\Throwable $e) {
+            $err = $e->getMessage();
+            if (strlen($err) > 480) $err = substr($err, 0, 480) . '…';
+            Setting::set('update_last_check_at', date('Y-m-d H:i:s'));
+            Setting::set('update_last_check_error', $err);
+            \think\facade\Log::error('[update] auto check failed: ' . $e->getMessage());
+        }
+    }
+
 
     /**
      * 检查更新：拉取远程 manifest 并对比
