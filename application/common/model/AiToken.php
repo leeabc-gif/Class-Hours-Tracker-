@@ -95,7 +95,7 @@ class AiToken extends Model
             'status'       => (int)$this->status,
             'expires_at'   => (int)$this->expires_at,
             'last_used_at' => (int)$this->last_used_at,
-            'created_at'   => (int)$this->created_at,
+            'created_at'   => (int)$this->getData('created_at'),
         ];
     }
 }

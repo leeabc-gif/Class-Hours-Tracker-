@@ -1020,7 +1020,7 @@ class Admin extends Base
                 'target_id'  => (int)$r->target_id,
                 'summary'    => $r->summary,
                 'ip'         => $r->ip,
-                'created_at' => date('Y-m-d H:i:s', (int)$r->created_at),
+                'created_at' => date('Y-m-d H:i:s', (int)$r->getData('created_at')),
             ];
         }
 

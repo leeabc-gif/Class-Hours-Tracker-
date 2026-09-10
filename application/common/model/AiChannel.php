@@ -94,7 +94,7 @@ class AiChannel extends Model
             'status'         => (int)$this->status,
             'last_ok_at'     => (int)$this->last_ok_at,
             'last_err'       => (string)$this->last_err,
-            'created_at'     => (int)$this->created_at,
+            'created_at'     => (int)$this->getData('created_at'),
         ];
     }
 }

@@ -191,6 +191,15 @@ a{text-decoration:none;color:inherit}
 .ai-act{border:1px solid #e2e8f0;background:#fff;border-radius:20px;padding:5px 12px;font-size:12.5px;color:#475569;cursor:pointer}
 .ai-act:hover{background:#eef2ff;color:#1d4ed8;border-color:#c7d2fe}
 
+/* 通知公告 */
+.nt-item{border:1px solid #eef2f7;border-radius:11px;padding:12px 14px;margin-bottom:10px;cursor:pointer;transition:.12s;background:#fff}
+.nt-item:hover{border-color:#c7d2fe;background:#fbfcff}
+.nt-item.unread{border-left:3px solid var(--pri)}
+.nt-item .nt-t{font-weight:600;font-size:14px;color:#0f172a;display:flex;align-items:center;flex-wrap:wrap;gap:2px}
+.nt-item .nt-s{font-size:12.5px;color:#64748b;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nt-item .nt-m{font-size:11.5px;color:#94a3b8;margin-top:5px}
+.nt-item .nt-ops{margin-top:8px;padding-top:8px;border-top:1px dashed #eef2f7}
+
 /* AI 操练场 */
 .pg-side{width:294px;flex-shrink:0;background:#fff;border:1px solid #e8edf4;border-radius:14px;display:flex;flex-direction:column;overflow:hidden}
 .pg-side .hd{padding:12px 14px;border-bottom:1px solid #f1f5f9;font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:6px}
@@ -408,6 +417,6 @@ a{text-decoration:none;color:inherit}
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script src="static/app/app.js?v=20260909f"></script>
+<script src="static/app/app.js?v=20260910a"></script>
 </body>
 </html>

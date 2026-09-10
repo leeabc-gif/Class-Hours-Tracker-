@@ -236,6 +236,38 @@
   const POST = (p, body) => api('POST', p, body || {});
   App.GET = GET; App.POST = POST;
 
+  /** 文件上传（multipart/form-data），自动携带 CSRF token；file 为 Input 的 File 对象 */
+  App.upload = async function (path, file, extra) {
+    const t = await fetchCsrf();
+    const fd = new FormData();
+    fd.append('file', file);
+    if (extra) Object.keys(extra).forEach(k => fd.append(k, extra[k]));
+    const headers = {};
+    if (t) headers['X-CSRF-Token'] = t;
+    let resp;
+    try {
+      resp = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: headers, body: fd });
+    } catch (e) {
+      toast('网络请求失败，请确认服务已启动', 'err');
+      throw e;
+    }
+    let data = null;
+    const ct = resp.headers.get('content-type') || '';
+    if (ct.indexOf('json') >= 0) {
+      try { data = await resp.json(); } catch (e) { data = null; }
+    }
+    if (data === null) {
+      toast('服务异常（HTTP ' + resp.status + '），请检查后端 PHP', 'err');
+      throw new Error('bad_response_' + resp.status);
+    }
+    if (data.code === 401) {
+      App.user = null; App.boot = null; showLogin();
+      toast('登录已失效，请重新登录', 'warn');
+      throw new Error('unauthorized');
+    }
+    return data;
+  };
+
   // 下载类型接口
   App.exportUrl = (path) => path; // Cookie 同源直接可下载
 
@@ -524,6 +556,7 @@
         { p: 'my-stats', i: 'bar-chart', t: '我的统计' },
         { p: 'ai', i: 'robot', t: 'AI 助手' },
         { p: 'ai-playground', i: 'joystick', t: 'AI 操练场' },
+        { p: 'notice', i: 'megaphone', t: '通知公告' },
         { p: 'ai-tokens', i: 'key', t: 'API 令牌' },
         { p: 'settings', i: 'person-gear', t: '个人设置' },
       ];
@@ -537,9 +570,19 @@
       { p: 'my-stats', i: 'bar-chart', t: '我的统计' },
       { p: 'ai', i: 'robot', t: 'AI 智能分析' },
       { p: 'ai-playground', i: 'joystick', t: 'AI 操练场' },
+      { p: 'notice', i: 'megaphone', t: '通知公告' },
       { p: 'ai-tokens', i: 'key', t: 'API 令牌' },
       { p: 'settings', i: 'person-gear', t: '个人设置' },
     ];
+  }
+
+  /** 导航右侧小红点：未读公告数（数据来自 Boot 注入的 notice_unread） */
+  function navBadge(page) {
+    if (page !== 'notice') return '';
+    const n = App.boot ? (App.boot.notice_unread || 0) : 0;
+    if (!n) return '';
+    return '<span class="badge rounded-pill bg-danger ms-auto" style="font-size:10px;line-height:1.5">'
+      + (n > 99 ? '99+' : n) + '</span>';
   }
 
   function buildNav() {
@@ -549,7 +592,8 @@
     items.forEach(it => {
       if (it.g) html += '<div class="nav-cap">' + esc(it.g) + '</div>';
       else html += '<div class="nav-item" data-page="' + it.p + '" onclick="KS.goPage(\'' + it.p + '\')">'
-        + '<i class="bi bi-' + it.i + '"></i><span>' + esc(it.t) + '</span></div>';
+        + '<i class="bi bi-' + it.i + '"></i><span>' + esc(it.t) + '</span>'
+        + navBadge(it.p) + '</div>';
     });
     host.innerHTML = html;
     setUserBadge();
@@ -579,6 +623,7 @@
     'my-stats': { t: '我的统计', a: '数据分析' },
     'ai': { t: 'AI 智能分析', a: '对话 · 解析 · 评估' },
     'ai-playground': { t: 'AI 操练场', a: '选模型 · 调参数 · 看消耗' },
+    'notice': { t: '通知公告', a: '查看 · 发布 · 已读回执' },
     'ai-tokens': { t: '我的 API 令牌', a: '额度 · sk- 密钥 · 外部调用' },
     'settings': { t: '个人设置', a: '资料与密码' },
   };
@@ -921,6 +966,7 @@
       + '<div class="flex-grow-1"></div>'
       + '<button class="btn btn-light btn-sm" onclick="KS.quickOpen()"><i class="bi bi-lightning-charge me-1"></i>快速录入</button>'
       + '<button class="btn btn-light btn-sm" onclick="KS.batchOpen()"><i class="bi bi-collection me-1"></i>批量生成</button>'
+      + '<button class="btn btn-outline-primary btn-sm" onclick="KS.importOpen()"><i class="bi bi-upload me-1"></i>导入课表</button>'
       + '<button class="btn btn-primary btn-sm" onclick="KS.lessonForm()"><i class="bi bi-plus-lg me-1"></i>完整新增</button>'
       + '</div>'
       + lessonFilterBar(
@@ -943,6 +989,102 @@
       + '</div>';
     loadLessons();
   };
+
+  // -------- 课表导入（CSV / Excel）--------
+  let importState = { rows: [], termId: 0 };
+
+  App.importOpen = function () {
+    importState = { rows: [], termId: 0 };
+    const terms = (App.boot.terms || []);
+    const cur = curTerm();
+    const termOpts = terms.map(t => '<option value="' + t.id + '"' + (cur && t.id === cur.id ? ' selected' : '') + '>' + esc(t.name) + '</option>').join('');
+    if (!termOpts) termOpts = '<option value="">（请先创建学期）</option>';
+    const typeOpts = [['normal', '常规课'], ['makeup', '补课'], ['swap', '调课'], ['training', '实训课']]
+      .map(x => '<option value="' + x[0] + '">' + x[1] + '</option>').join('');
+    const body = ''
+      + '<div class="small text-muted mb-2">支持 <b>.csv / .xlsx</b>。表头可用「课程名称 / 班级 / 周次 / 星期 / 节次 / 上课日期 / 课时 / 单价 / 类型 / 备注」，列顺序不限。导入的课时会自动出现在「课表日历」中。</div>'
+      + '<div class="row g-2 mb-2">'
+      + '  <div class="col-6"><label class="form-label">目标学期</label><select id="impTerm" class="form-select form-select-sm">' + termOpts + '</select></div>'
+      + '  <div class="col-3"><label class="form-label">缺省单价</label><input id="impPrice" class="form-control form-control-sm" type="number" min="0" step="1" placeholder="0"></div>'
+      + '  <div class="col-3"><label class="form-label">缺省类型</label><select id="impType" class="form-select form-select-sm">' + typeOpts + '</select></div>'
+      + '</div>'
+      + '<div class="d-flex align-items-center gap-2 mb-2">'
+      + '  <input id="impFile" type="file" accept=".csv,.xlsx" class="form-control form-control-sm">'
+      + '  <a href="/api/scheduleimport/template" class="btn btn-outline-secondary btn-sm" target="_blank"><i class="bi bi-download me-1"></i>模板</a>'
+      + '  <button class="btn btn-primary btn-sm" onclick="KS.importPreview()"><i class="bi bi-search me-1"></i>解析预览</button>'
+      + '</div>'
+      + '<div id="impPreview"></div>';
+    openModal('导入课表', body, [
+      { t: '确认导入', c: 'btn-success', act: importConfirm }
+    ]);
+  };
+
+  App.importPreview = async function () {
+    const fileInput = $('#impFile');
+    if (!fileInput || !fileInput.files || !fileInput.files.length) { toast('请先选择文件', 'warn'); return; }
+    const termSel = $('#impTerm');
+    const termId = termSel ? parseInt(termSel.value, 10) : 0;
+    if (!termId) { toast('请选择目标学期', 'warn'); return; }
+    const box = $('#impPreview');
+    if (box) box.innerHTML = '<div class="text-muted small py-2"><i class="bi bi-hourglass-split"></i> 解析中…</div>';
+    importState.termId = termId;
+    try {
+      const res = await App.upload('/api/scheduleimport/preview', fileInput.files[0]);
+      if (res.code !== 0) { if (box) box.innerHTML = '<div class="text-danger small">' + esc(res.msg) + '</div>'; return; }
+      importState.rows = res.data.rows || [];
+      renderImportPreview(res.data);
+    } catch (e) {
+      if (box) box.innerHTML = '<div class="text-danger small">解析失败：' + esc(e.message || '') + '</div>';
+    }
+  };
+
+  function renderImportPreview(d) {
+    const box = $('#impPreview'); if (!box) return;
+    const rows = d.rows || [];
+    const stats = d.stats || {};
+    if (!rows.length) { box.innerHTML = '<div class="text-muted small py-2">没有可解析的数据行。</div>'; return; }
+    let html = '<div class="small text-muted mb-2">共 ' + (stats.total || 0) + ' 行，可导入 ' + (stats.parsed || 0) + ' 行'
+      + (stats.invalid ? '，' + stats.invalid + ' 行有错误（将忽略）' : '') + '。请核对无误后点「确认导入」。</div>';
+    html += '<div style="max-height:340px;overflow:auto"><table class="table table-sm table-bordered align-middle mb-0"><thead><tr>'
+      + '<th>课程</th><th>班级</th><th>周</th><th>星期</th><th>节次</th><th>日期</th><th>课时</th><th>类型</th><th>状态</th></tr></thead><tbody>';
+    rows.forEach(function (r) {
+      const bad = r.error ? ' class="table-danger"' : '';
+      html += '<tr' + bad + '><td>' + esc(r.course_name || '') + '</td><td>' + esc(r.classes || '') + '</td>'
+        + '<td>' + (r.week || '-') + '</td><td>' + esc(r.weekday_text || '') + '</td><td>' + esc(r.section_text || '') + '</td>'
+        + '<td>' + (r.teach_date || '-') + '</td><td>' + (r.periods || '') + '</td><td>' + esc(r.type || '') + '</td>'
+        + '<td>' + (r.error ? '<span class="text-danger small">' + esc(r.error) + '</span>' : '<span class="text-success small">OK</span>') + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }
+
+  App.importConfirm = async function () {
+    const rows = (importState.rows || []).filter(function (r) { return !r.error; });
+    if (!rows.length) { toast('没有可导入的有效行', 'warn'); return; }
+    const termId = importState.termId;
+    if (!termId) { toast('请先选择学期并解析', 'warn'); return; }
+    const priceEl = $('#impPrice'), typeEl = $('#impType');
+    const price = priceEl ? (parseFloat(priceEl.value) || 0) : 0;
+    const type = typeEl ? typeEl.value : 'normal';
+    try {
+      const res = await POST('/api/scheduleimport/import', { term_id: termId, rows: rows, default_price: price, default_type: type, skip_conflict: true });
+      if (res.code === 0) {
+        const d = res.data || {};
+        let msg = '导入成功：新增 ' + (d.created || 0) + ' 条';
+        if (d.skipped_conflict && d.skipped_conflict.length) msg += '，跳过 ' + d.skipped_conflict.length + ' 条冲突';
+        if (d.skipped_invalid && d.skipped_invalid.length) msg += '，' + d.skipped_invalid.length + ' 条无效';
+        toast(msg, (d.created || 0) ? 'ok' : 'warn');
+        hideModal();
+        if (App.page === 'my-lessons') loadLessons();
+        if (typeof calCache !== 'undefined') calCache = {};
+      } else {
+        toast(res.msg, 'err');
+      }
+    } catch (e) {
+      toast('导入失败：' + (e.message || ''), 'err');
+    }
+  };
+
   let lessonPageNo = 1, lessonTotal = 0, lessonRows = [];
   async function loadLessons() {
     const tbody = $('#lessonTbody'); if (!tbody) return;
@@ -2269,6 +2411,186 @@
     });
     pgRenderMsgs();
   };
+
+  // -------- 通知公告 --------
+  let ntState = { list: [], drafts: [], unread: 0, isAdmin: false };
+
+  ROUTERS['notice'] = function (host) {
+    host.innerHTML = '<div class="card mb-3"><div class="card-h"><i class="bi bi-megaphone text-primary"></i>'
+      + '<span class="tt">通知公告</span><div class="flex-grow-1"></div>'
+      + '<span class="small text-muted me-2" id="ntUnreadTip"></span>'
+      + '<button class="btn btn-sm btn-outline-secondary me-1" onclick="KS.noticeReadAll()">全部已读</button>'
+      + '<button class="btn btn-sm btn-outline-primary me-1" onclick="KS.noticeReload()"><i class="bi bi-arrow-clockwise"></i></button>'
+      + '<button class="btn btn-sm btn-primary d-none" id="ntNewBtn" onclick="KS.noticeForm()"><i class="bi bi-plus-lg"></i> 发布公告</button>'
+      + '</div><div class="card-b" id="ntList"><div class="text-center text-muted small py-4">加载中…</div></div></div>'
+      + '<div class="card d-none" id="ntDraftCard"><div class="card-h"><i class="bi bi-file-earmark text-secondary"></i>'
+      + '<span class="tt">草稿箱</span></div><div class="card-b p-0">'
+      + '<div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr>'
+      + '<th>标题</th><th>范围</th><th>时间</th><th style="width:170px">操作</th></tr></thead>'
+      + '<tbody id="ntDraftBody"></tbody></table></div></div></div>';
+    noticeLoad();
+  };
+
+  async function noticeLoad() {
+    const res = await GET('/api/notice/mine');
+    if (gone('ntList')) return;
+    const box = $('#ntList');
+    if (res.code !== 0) { if (box) box.innerHTML = '<div class="text-danger small">' + esc(res.msg) + '</div>'; return; }
+    const d = res.data || {};
+    ntState.list    = d.list || [];
+    ntState.drafts  = d.drafts || [];
+    ntState.unread  = d.unread || 0;
+    ntState.isAdmin = !!d.is_admin;
+    if (App.boot) App.boot.notice_unread = ntState.unread;
+    buildNav();
+    noticeRender();
+  }
+
+  function noticeScopeText(s) {
+    return s === 'teacher' ? '仅教师' : (s === 'admin' ? '仅管理员' : '全体');
+  }
+
+  function noticeRender() {
+    const box = $('#ntList');
+    if (!box) return;
+
+    const newBtn = $('#ntNewBtn');
+    if (newBtn) newBtn.classList.toggle('d-none', !ntState.isAdmin);
+    const tip = $('#ntUnreadTip');
+    if (tip) tip.textContent = ntState.unread > 0 ? ('未读 ' + ntState.unread + ' 条') : '已全部阅读';
+
+    if (!ntState.list.length) {
+      box.innerHTML = '<div class="text-center text-muted small py-4">暂时没有通知公告。</div>';
+    } else {
+      box.innerHTML = ntState.list.map(function (n) {
+        const typeBadge = n.type === 'announce'
+          ? '<span class="badge bg-primary me-1">公告</span>'
+          : '<span class="badge bg-info text-dark me-1">通知</span>';
+        const pin = n.pinned ? '<span class="badge bg-danger me-1">置顶</span>' : '';
+        const dot = (!n.read && !ntState.isAdmin) ? '<span class="badge rounded-pill bg-danger ms-1">未读</span>' : '';
+        const ops = ntState.isAdmin
+          ? '<div class="btn-group btn-group-sm">'
+            + '<button class="btn btn-outline-secondary" onclick="KS.noticePin(' + n.id + ',' + (n.pinned ? 0 : 1) + ')">' + (n.pinned ? '取消置顶' : '置顶') + '</button>'
+            + '<button class="btn btn-outline-secondary" onclick="KS.noticeToggle(' + n.id + ',0)">下架</button>'
+            + '<button class="btn btn-outline-secondary" onclick="KS.noticeForm(' + n.id + ')">编辑</button>'
+            + '<button class="btn btn-outline-secondary" onclick="KS.noticeStat(' + n.id + ')">已读</button>'
+            + '<button class="btn btn-outline-danger" onclick="KS.noticeDel(' + n.id + ')">删</button></div>'
+          : '';
+        return '<div class="nt-item' + (n.read ? '' : ' unread') + '" onclick="KS.noticeDetail(' + n.id + ')">'
+          + '<div class="nt-t">' + typeBadge + pin + esc(n.title) + dot + '</div>'
+          + '<div class="nt-s">' + esc(n.summary || '') + '</div>'
+          + '<div class="nt-m">' + esc(n.publisher || '系统') + ' · ' + esc(fmtTs(n.created_at))
+          + ' · ' + noticeScopeText(n.scope) + '</div>'
+          + (ops ? '<div class="nt-ops" onclick="event.stopPropagation()">' + ops + '</div>' : '')
+          + '</div>';
+      }).join('');
+    }
+
+    const card = $('#ntDraftCard'), body = $('#ntDraftBody');
+    if (card) card.classList.toggle('d-none', !(ntState.isAdmin && ntState.drafts.length));
+    if (body) {
+      body.innerHTML = (ntState.drafts || []).map(function (n) {
+        return '<tr><td>' + esc(n.title) + '</td><td class="small">' + noticeScopeText(n.scope) + '</td>'
+          + '<td class="small text-muted">' + esc(fmtTs(n.created_at)) + '</td>'
+          + '<td style="white-space:nowrap"><button class="btn btn-sm btn-outline-success" onclick="KS.noticeToggle(' + n.id + ',1)">发布</button> '
+          + '<button class="btn btn-sm btn-outline-secondary" onclick="KS.noticeForm(' + n.id + ')">编辑</button> '
+          + '<button class="btn btn-sm btn-outline-danger" onclick="KS.noticeDel(' + n.id + ')">删</button></td></tr>';
+      }).join('');
+    }
+  }
+
+  App.noticeReload = function () { noticeLoad(); };
+
+  App.noticeDetail = async function (id) {
+    const res = await GET('/api/notice/detail', { id: id });
+    if (res.code !== 0) { toast(res.msg, 'err'); return; }
+    const n = res.data.notice;
+    openModal(esc(n.title), ''
+      + '<div class="small text-muted mb-2">' + esc(n.publisher || '系统') + ' · ' + esc(fmtTs(n.created_at))
+      + ' · ' + noticeScopeText(n.scope) + (n.pinned ? ' · 置顶' : '') + '</div>'
+      + '<div style="white-space:pre-wrap;line-height:1.75">' + esc(n.content) + '</div>',
+      [{ t: '关闭', c: 'btn-secondary', act: function () { hideModal(); noticeLoad(); } }]);
+  };
+
+  App.noticeReadAll = async function () {
+    const res = await POST('/api/notice/readAll', {});
+    if (res.code !== 0) { toast(res.msg, 'err'); return; }
+    toast('已全部标记为已读');
+    noticeLoad();
+  };
+
+  App.noticePin = async function (id, v) {
+    const res = await POST('/api/notice/pin', { id: id, pinned: v });
+    if (res.code !== 0) { toast(res.msg, 'err'); return; }
+    toast(res.msg); noticeLoad();
+  };
+  App.noticeToggle = async function (id, v) {
+    const res = await POST('/api/notice/toggle', { id: id, status: v });
+    if (res.code !== 0) { toast(res.msg, 'err'); return; }
+    toast(res.msg); noticeLoad();
+  };
+  App.noticeDel = async function (id) {
+    if (!confirm('删除这条公告？已读回执也会一并清除。')) return;
+    const res = await POST('/api/notice/delete', { id: id });
+    if (res.code !== 0) { toast(res.msg, 'err'); return; }
+    toast('已删除'); noticeLoad();
+  };
+  App.noticeStat = async function (id) {
+    const res = await GET('/api/notice/readStat', { id: id });
+    if (res.code !== 0) { toast(res.msg, 'err'); return; }
+    const d = res.data;
+    const rows = (d.readers || []).map(function (r) {
+      return '<tr><td>' + esc(r.name) + '</td><td class="small text-muted">' + esc(fmtTs(r.read_at)) + '</td></tr>';
+    }).join('');
+    openModal('已读情况', '<div class="mb-2">已读 <b>' + d.read + '</b> / ' + d.total + ' 人</div>'
+      + (rows ? '<div style="max-height:320px;overflow:auto"><table class="table table-sm"><tbody>' + rows + '</tbody></table></div>'
+              : '<div class="text-muted small">还没有人读过。</div>'),
+      [{ t: '关闭', c: 'btn-secondary', act: hideModal }]);
+  };
+
+  App.noticeForm = function (id) {
+    const all = (ntState.list || []).concat(ntState.drafts || []);
+    const n = id ? all.filter(function (x) { return x.id === id; })[0] : null;
+    openModal(id ? '编辑公告' : '发布公告', ''
+      + '<div class="mb-2"><label class="form-label">标题</label>'
+      + '<input id="ntTitle" class="form-control" maxlength="200" value="' + esc(n ? n.title : '') + '" placeholder="如：关于本学期课时录入截止的通知"></div>'
+      + '<div class="row g-2 mb-2">'
+      + '<div class="col-6"><label class="form-label">类型</label>'
+      + '<select id="ntType" class="form-select">'
+      + '<option value="notice"' + (n && n.type === 'announce' ? '' : ' selected') + '>通知</option>'
+      + '<option value="announce"' + (n && n.type === 'announce' ? ' selected' : '') + '>公告</option></select></div>'
+      + '<div class="col-6"><label class="form-label">可见范围</label>'
+      + '<select id="ntScope" class="form-select">'
+      + '<option value="all"' + (!n || n.scope === 'all' ? ' selected' : '') + '>全体</option>'
+      + '<option value="teacher"' + (n && n.scope === 'teacher' ? ' selected' : '') + '>仅教师</option>'
+      + '<option value="admin"' + (n && n.scope === 'admin' ? ' selected' : '') + '>仅管理员</option></select></div></div>'
+      + '<div class="mb-2"><label class="form-label">正文</label>'
+      + '<textarea id="ntContent" class="form-control" rows="8" placeholder="支持纯文本，段落之间空一行即可">' + esc(n ? (n.content || '') : '') + '</textarea></div>'
+      + '<div class="form-check"><input class="form-check-input" type="checkbox" id="ntPin"' + (n && n.pinned ? ' checked' : '') + '>'
+      + '<label class="form-check-label small" for="ntPin">置顶显示</label></div>',
+      [{ t: '保存并发布', c: 'btn-primary', act: function () { noticeSave(id, true); } }]
+        .concat(id ? [] : [{ t: '存为草稿', c: 'btn-outline-secondary', act: function () { noticeSave(0, false); } }]));
+  };
+
+  async function noticeSave(id, publish) {
+    const title = ($('#ntTitle').value || '').trim();
+    const content = ($('#ntContent').value || '').trim();
+    if (!title) { toast('请填写标题', 'warn'); return; }
+    if (!content) { toast('请填写正文', 'warn'); return; }
+    const res = await POST('/api/notice/save', {
+      id: id || 0,
+      title: title,
+      content: content,
+      type: $('#ntType').value,
+      scope: $('#ntScope').value,
+      pinned: $('#ntPin').checked ? 1 : 0,
+      publish: publish ? 1 : 0,
+    });
+    if (res.code !== 0) { toast(res.msg, 'err'); return; }
+    hideModal();
+    toast(res.msg);
+    noticeLoad();
+  }
 
   ROUTERS['ai'] = function (host) {
     host.innerHTML = `<div class="ai-wrap">

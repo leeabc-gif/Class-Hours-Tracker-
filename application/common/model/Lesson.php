@@ -58,6 +58,7 @@ class Lesson extends Model
         'batch'  => '批量生成',
         'ai'     => 'AI解析',
         'scan'   => '扫码',
+        'import' => '课表导入',
     ];
 
     // -------------------- 读取辅助 --------------------
@@ -127,8 +128,8 @@ class Lesson extends Model
             'remark'      => $this->remark,
             'source'      => $this->source,
             'source_text' => $this->sourceText(),
-            'created_at'  => (int)$this->created_at,
-            'updated_at'  => (int)$this->updated_at,
+            'created_at'  => (int)$this->getData('created_at'),
+            'updated_at'  => (int)$this->getData('updated_at'),
         ];
     }
 

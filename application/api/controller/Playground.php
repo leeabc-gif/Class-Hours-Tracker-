@@ -142,7 +142,7 @@ class Playground extends Base
                 'latency_ms'=> (int)$r->latency_ms,
                 'status'    => (int)$r->status,
                 'source'    => (string)$r->source,
-                'created_at'=> (int)$r->created_at,
+                'created_at'=> (int)$r->getData('created_at'),
             ];
         }
         return $this->ok(['list' => $out]);

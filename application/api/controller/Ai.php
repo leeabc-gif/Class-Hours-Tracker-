@@ -63,7 +63,7 @@ class Ai extends Base
             $conversations[] = [
                 'id'         => (int)$c->id,
                 'title'      => $c->title,
-                'updated_at' => (int)$c->updated_at,
+                'updated_at' => (int)$c->getData('updated_at'),
             ];
         }
 
@@ -78,7 +78,7 @@ class Ai extends Base
                     'intent'  => $m->intent,
                     'content' => $m->content,
                     'payload' => $m->payloadArray(),
-                    'time'    => date('H:i', (int)$m->created_at),
+                    'time'    => date('H:i', (int)$m->getData('created_at')),
                 ];
             }
         }
@@ -104,7 +104,7 @@ class Ai extends Base
             $out[] = [
                 'id'         => (int)$c->id,
                 'title'      => $c->title,
-                'updated_at' => (int)$c->updated_at,
+                'updated_at' => (int)$c->getData('updated_at'),
             ];
         }
         return $this->ok($out);
@@ -129,7 +129,7 @@ class Ai extends Base
                 'intent'  => $m->intent,
                 'content' => $m->content,
                 'payload' => $m->payloadArray(),
-                'time'    => date('H:i', (int)$m->created_at),
+                'time'    => date('H:i', (int)$m->getData('created_at')),
             ];
         }
         return $this->ok(['messages' => $out]);

@@ -66,8 +66,8 @@ class Notice extends Model
             'publisher'     => $this->publisherName(),
             'status'        => (int)$this->status,
             'read'          => $isRead ? 1 : 0,
-            'created_at'    => (int)$this->created_at,
-            'updated_at'    => (int)$this->updated_at,
+            'created_at'    => (int)$this->getData('created_at'),
+            'updated_at'    => (int)$this->getData('updated_at'),
         ];
     }
 }

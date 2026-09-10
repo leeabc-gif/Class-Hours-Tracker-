@@ -123,7 +123,7 @@ class AiUsageLog extends Model
             'status'            => (int)$this->status,
             'error_msg'         => (string)$this->error_msg,
             'source'            => (string)$this->getData('source'),
-            'created_at'        => (int)$this->created_at,
+            'created_at'        => (int)$this->getData('created_at'),
         ];
     }
 }

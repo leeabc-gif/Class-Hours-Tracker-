@@ -25,6 +25,13 @@ Route::get('hello/:name', 'index/hello');
 Route::post('v1/chat/completions', 'api/V1/chatCompletions');
 Route::get('v1/models', 'api/V1/models');
 
+// ---------------------------------------------------------------------
+// 外部课表导入（CSV / Excel）：upload 走 multipart/form-data，其余走 JSON
+// ---------------------------------------------------------------------
+Route::post('scheduleimport/preview', 'api/ScheduleImport/preview');
+Route::post('scheduleimport/import', 'api/ScheduleImport/import');
+Route::get('scheduleimport/template', 'api/ScheduleImport/template');
+
 return [
 
 ];
