@@ -1,21 +1,8 @@
--- ============================================================
--- v1.1.2 升级迁移
--- 作用：
---   1) 后台「系统更新」页改造：进页面自动检查新版本，有新版直接点"立即更新"
---      （代码改动在 application/api/controller/Admin.php 与
---        public/static/app/app.js，本 SQL 无需为此做结构变更）
---   2) 把默认 CNB 更新源从写死的 v1.0.8 改成 latest 入口，
---      让老站升级后能自动发现后续新版本 —— 见下方 UPDATE ks_setting。
---   3) 兼容「从 1.0.x 老站直升 1.1.2」：幂等补齐 AI 中转平台（5 张表）
---      与通知公告（2 张表）；已存在则不重建。
---   4) 同步 app_version → 1.1.2
---
--- 注意（重要）：下面的 CREATE TABLE 属 DDL，MySQL 执行 DDL 会隐式提交事务。
---   v1.1.1 起 UpdateService 已改为「含 DDL 时不再开事务」并在
---   commit/rollBack 前复查 inTransaction()，故不会再抛
---   "There is no active transaction"。请勿把本文件的 DDL 手工包进事务。
--- 课表导入（CSV/Excel）复用已有 ks_lesson，无需新表。
--- ============================================================
+-- v1.1.x 所需新增表（AI 中转平台 5 张 + 通知公告 2 张）
+-- 幂等：全部用 CREATE TABLE IF NOT EXISTS，已存在则跳过
+-- 此文件由 UpdateService::ensureSchemaIfNeeded() 在新代码就位后读取执行，
+-- 不会出现在 upgrade.sql 里，避免旧代码在事务中执行 DDL 导致
+-- "There is no active transaction"。
 
 CREATE TABLE IF NOT EXISTS `ks_ai_channel` (
   `id`         int(10) unsigned NOT NULL AUTO_INCREMENT,
@@ -91,7 +78,7 @@ CREATE TABLE IF NOT EXISTS `ks_ai_usage_log` (
   `model`             varchar(100) NOT NULL DEFAULT '',
   `prompt_tokens`     int(11) NOT NULL DEFAULT 0,
   `completion_tokens` int(11) NOT NULL DEFAULT 0,
-  `points`            decimal(12,4) NOT NULL DEFAULT '0.0000' COMMENT '本次消耗点数',
+  `points`            decimal(16,6) NOT NULL DEFAULT '0.000000' COMMENT '本次消耗点数',
   `latency_ms`        int(11) NOT NULL DEFAULT 0,
   `status`            tinyint(1) NOT NULL DEFAULT 1 COMMENT '1成功 0失败',
   `error_msg`         varchar(500) NOT NULL DEFAULT '',
@@ -99,8 +86,7 @@ CREATE TABLE IF NOT EXISTS `ks_ai_usage_log` (
   `ip`                varchar(45) NOT NULL DEFAULT '',
   `created_at`        int(11) NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`),
-  KEY `idx_teacher` (`teacher_id`,`created_at`),
-  KEY `idx_created` (`created_at`)
+  KEY `idx_teacher_time` (`teacher_id`,`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI用量日志';
 
 CREATE TABLE IF NOT EXISTS `ks_notice` (
@@ -126,38 +112,3 @@ CREATE TABLE IF NOT EXISTS `ks_notice_read` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_nr` (`notice_id`,`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='公告已读回执';
-
--- ------------------------------------------------------------
--- v1.1.2：把「写死到具体 tag」的 CNB 默认更新源升级为 latest 入口
---
--- 背景：v1.0.8 时因 CNB 的 latest/download 直链会 404，代码里把默认源
---   写死成 .../releases/download/v1.0.8/manifest.json。老站数据库里若
---   存过这个值，即使升级到新版也仍然指向 v1.0.8，永远发现不了新版本。
---   v1.1.2 起 UpdateService 会抓 /-/releases 列表自动挑最新 tag，
---   所以这里把历史写死值清成空串，让代码回落到新的默认 latest 入口。
---   仅清理"官方写死值"，管理员自定义的第三方地址一律不动。
--- ------------------------------------------------------------
-UPDATE `ks_setting`
-   SET `cfg_value` = ''
- WHERE `cfg_key` = 'update_manifest_url'
-   AND `cfg_value` LIKE 'https://cnb.cool/bmayan/class-hours-tracker/-/releases/download/v1.%/manifest.json';
-
--- 同步版本号
--- 注意：历史版本用 CAST(cfg_value AS DECIMAL) 比较是错的——MySQL 只取到第一个
---   小数点，'1.0.8'→1.000、'1.1.1'/'1.1.2'/'1.10.0' 全部→1.100，
---   会导致「已是更高版本的站被降级改写」。这里改用三段各补零到 4 位后
---   做字符串比较，保证只在「当前版本确实低于 1.1.2」时才写。
-UPDATE `ks_setting`
-   SET `cfg_value` = '1.1.2'
- WHERE `cfg_key` = 'app_version'
-   AND (
-        `cfg_value` IN ('', '0')
-     OR CONCAT(
-          LPAD(SUBSTRING_INDEX(CONCAT(`cfg_value`, '.0.0'), '.', 1), 4, '0'), '.',
-          LPAD(SUBSTRING_INDEX(SUBSTRING_INDEX(CONCAT(`cfg_value`, '.0.0'), '.', 2), '.', -1), 4, '0'), '.',
-          LPAD(SUBSTRING_INDEX(SUBSTRING_INDEX(CONCAT(`cfg_value`, '.0.0'), '.', 3), '.', -1), 4, '0')
-        ) < '0001.0001.0002'
-   );
-
-INSERT IGNORE INTO `ks_setting` (`cfg_key`, `cfg_value`, `remark`)
-VALUES ('app_version', '1.1.2', '系统当前版本（在线更新维护）');

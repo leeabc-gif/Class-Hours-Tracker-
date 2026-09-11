@@ -2359,6 +2359,11 @@
 
     inp.value = '';
     pgState.msgs.push({ role: 'user', content: text, time: nowHM() });
+
+    // 先占位一个 assistant 消息，后续流式往里追加
+    const assistantMsg = { role: 'assistant', content: '', time: nowHM(), stat: null, _live: true };
+    pgState.msgs.push(assistantMsg);
+    const assistantIdx = pgState.msgs.length - 1;
     pgRenderMsgs();
 
     const btn = $('#pgSendBtn');
@@ -2368,49 +2373,170 @@
     // system 单独字段回传；history 只含 user/assistant
     const history = pgState.msgs.filter(function (m) {
       return m.role === 'user' || m.role === 'assistant';
-    }).map(function (m) { return { role: m.role, content: m.content }; });
+    }).filter(function (m) { return m.content || m === assistantMsg; })
+      .map(function (m) { return { role: m.role, content: m.content }; });
 
-    let res;
+    const payload = {
+      model: pgState.model,
+      system: pgState.system || '',
+      messages: history,
+      temperature: pgState.temperature,
+      max_tokens: pgState.max_tokens || 0,
+    };
+
+    let ok = false;
+    let finalErr = '';
     try {
-      res = await POST('/api/playground/chat', {
-        model: pgState.model,
-        system: pgState.system || '',
-        messages: history,
-        temperature: pgState.temperature,
-        max_tokens: pgState.max_tokens || 0,
+      ok = await pgSendStream(payload, assistantIdx, function (stat) {
+        assistantMsg.stat = stat;
+        // 渲染一次底部统计
+        pgRenderMsgs();
+      }, function (errMsg) {
+        finalErr = errMsg;
       });
     } catch (e) {
-      res = { code: 1, msg: '网络异常，请重试' };
+      finalErr = '网络异常：' + (e && e.message ? e.message : e);
     }
 
     pgState.busy = false;
     if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-send-fill"></i>'; }
-    if (gone('pgMsgs')) return;   // 已切走页面，丢弃过期结果
+    if (gone('pgMsgs')) return;
 
-    if (res.code !== 0) {
-      if (res.data && res.data.quota) { pgState.quota = res.data.quota; pgRenderQuota(); }
-      pgState.msgs.push({ role: 'error', content: (res.msg || '调用失败'), time: nowHM() });
-      pgRenderMsgs();
-      toast(res.msg || '调用失败', 'err');
+    if (!ok) {
+      // 流式失败：尝试 fallback 到非流式接口
+      let fb = null;
+      try {
+        fb = await POST('/api/playground/chat', payload);
+      } catch (e) { fb = { code: 1, msg: '网络异常，请重试' }; }
+      if (gone('pgMsgs')) return;
+      if (fb && fb.code === 0) {
+        const d = fb.data || {};
+        assistantMsg.content = d.content || '';
+        assistantMsg.stat = {
+          model: d.model || pgState.model,
+          prompt: (d.usage && d.usage.prompt_tokens) || 0,
+          completion: (d.usage && d.usage.completion_tokens) || 0,
+          points: d.points || 0,
+          latency: d.latency_ms || 0,
+        };
+        if (d.quota) { pgState.quota = d.quota; pgRenderQuota(); }
+        pgRenderMsgs();
+        toast('（流式不可用，已回退到一次性返回）', 'warn');
+      } else {
+        assistantMsg.role = 'error';
+        assistantMsg.content = (fb && fb.msg) || finalErr || '调用失败';
+        assistantMsg._live = false;
+        pgRenderMsgs();
+        toast(assistantMsg.content, 'err');
+      }
       return;
     }
-
-    const d = res.data || {};
-    if (d.quota) { pgState.quota = d.quota; pgRenderQuota(); }
-    pgState.msgs.push({
-      role: 'assistant',
-      content: d.content || '',
-      time: nowHM(),
-      stat: {
-        model: d.model || pgState.model,
-        prompt: (d.usage && d.usage.prompt_tokens) || 0,
-        completion: (d.usage && d.usage.completion_tokens) || 0,
-        points: d.points || 0,
-        latency: d.latency_ms || 0,
-      },
-    });
-    pgRenderMsgs();
+    // 拉一次最新额度
+    try { await pgLoad(); } catch (e) {}
   };
+
+  /**
+   * 用 fetch + ReadableStream 读 SSE。
+   * 返回 true 表示服务端 OK，false 表示失败（可能为流式不可用）。
+   */
+  async function pgSendStream(payload, assistantIdx, onFinalStat, onError) {
+    const host = $('#pgMsgs');
+    const bubble = host ? host.querySelector('.msg.ai:last-child .bubble') : null;
+
+    let resp;
+    try {
+      resp = await fetch('/api/playground/stream', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      onError('网络异常：' + (e && e.message ? e.message : e));
+      return false;
+    }
+    if (!resp.ok) {
+      // 流式接口本身出错（路由不存在 / 服务器拒绝）→ 回退到非流式
+      onError('流式接口 HTTP ' + resp.status);
+      return false;
+    }
+    if (!resp.body || typeof resp.body.getReader !== 'function') {
+      onError('当前浏览器不支持 ReadableStream');
+      return false;
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buf = '';
+    let acc = '';
+    let lastStat = null;
+    let isFirstChunk = true;
+    let lastErrMsg = '';
+
+    function append(delta) {
+      acc += delta;
+      const m = pgState.msgs[assistantIdx];
+      if (m) { m.content = acc; m._live = true; }
+      if (bubble) {
+        bubble.textContent = acc;
+        if (host) host.scrollTop = host.scrollHeight;
+      }
+    }
+
+    while (true) {
+      let chunk;
+      try {
+        const r = await reader.read();
+        chunk = r.value;
+        if (r.done) break;
+      } catch (e) {
+        lastErrMsg = '读取流失败：' + (e && e.message ? e.message : e);
+        break;
+      }
+      buf += decoder.decode(chunk, { stream: true });
+      // 按 \n\n 拆事件
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const ev = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        if (ev.charAt(0) === ':') continue; // SSE 注释（用于换渠道提示）
+        const dataLine = ev.split('\n').filter(function (l) { return l.indexOf('data:') === 0; }).map(function (l) { return l.slice(5).trimStart(); }).join('\n');
+        if (!dataLine) continue;
+        if (dataLine === '[DONE]') { buf = ''; break; }
+        let parsed = null;
+        try { parsed = JSON.parse(dataLine); } catch (e) { continue; }
+        if (parsed && parsed.error) {
+          lastErrMsg = (parsed.error && parsed.error.message) || '上游错误';
+          continue;
+        }
+        const choices = (parsed && parsed.choices) || [];
+        const choice = choices[0] || {};
+        const delta = (choice.delta && typeof choice.delta.content === 'string') ? choice.delta.content : '';
+        if (delta) {
+          if (isFirstChunk) { isFirstChunk = false; }
+          append(delta);
+        }
+        if (parsed.usage) {
+          lastStat = {
+            model: parsed.model || pgState.model,
+            prompt: parsed.usage.prompt_tokens || 0,
+            completion: parsed.usage.completion_tokens || 0,
+            points: parsed.usage.points || 0,
+            latency: 0,
+            channel: parsed.usage.channel_id || 0,
+          };
+        }
+      }
+    }
+    if (lastStat && onFinalStat) onFinalStat(lastStat);
+    if (lastErrMsg) onError(lastErrMsg);
+    if (isFirstChunk) {
+      // 一片内容都没收到 → 当作流式失败
+      onError('未收到流式数据');
+      return false;
+    }
+    return !lastErrMsg;
+  }
 
   // -------- 通知公告 --------
   let ntState = { list: [], drafts: [], unread: 0, isAdmin: false };

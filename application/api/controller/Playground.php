@@ -120,6 +120,117 @@ class Playground extends Base
         ]);
     }
 
+    /**
+     * 流式聊天（SSE）。
+     * 入参与 chat() 相同；额外接受 stream 字段（默认 true）。
+     * 输出 text/event-stream，结构兼容 OpenAI：
+     *   data: {"choices":[{"delta":{"content":"..."}}]}\n\n
+     *   data: [DONE]\n\n
+     */
+    public function streamChat()
+    {
+        $this->requireLogin();
+        $uid  = (int)$this->user->id;
+        $data = $this->jsonInput();
+
+        $model = trim((string)(isset($data['model']) ? $data['model'] : ''));
+        if ($model === '') $model = AiProxy::defaultModel();
+        if ($model === '') {
+            $this->sseError('系统尚未配置可用模型，请联系管理员先在「AI 中转 → 渠道」中添加');
+            return;
+        }
+        if (!self::modelAllowed($model)) {
+            $this->sseError('模型「' . $model . '」当前不可用，请换一个');
+            return;
+        }
+
+        $messages = self::normalizeMessages($data);
+        if (empty($messages)) {
+            $this->sseError('请输入内容');
+            return;
+        }
+
+        $temperature = isset($data['temperature']) ? floatval($data['temperature']) : 0.7;
+        if ($temperature < 0) $temperature = 0;
+        if ($temperature > 2) $temperature = 2;
+
+        $maxTokens = intval(isset($data['max_tokens']) ? $data['max_tokens'] : 0);
+        if ($maxTokens < 0) $maxTokens = 0;
+        if ($maxTokens > 8192) $maxTokens = 8192;
+
+        // 关闭缓冲
+        while (ob_get_level() > 0) { @ob_end_clean(); }
+        @ob_implicit_flush(true);
+        @ini_set('output_buffering', '0');
+        @ini_set('zlib.output_compression', '0');
+        @header('Content-Type: text/event-stream; charset=utf-8');
+        @header('Cache-Control: no-cache, no-transform');
+        @header('X-Accel-Buffering: no');
+        @http_response_code(200);
+
+        $respId  = 'pg-' . bin2hex(function_exists('random_bytes') ? random_bytes(8) : openssl_random_pseudo_bytes(8));
+        $created = time();
+        $sseWrite = function ($payload) {
+            echo 'data: ' . json_encode($payload, JSON_UNESCAPED_UNICODE) . "\n\n";
+            @ob_flush(); @flush();
+        };
+        // 首包
+        $sseWrite([
+            'id' => $respId, 'object' => 'pg.chunk', 'created' => $created, 'model' => $model,
+            'choices' => [['index' => 0, 'delta' => ['role' => 'assistant'], 'finish_reason' => null]],
+        ]);
+
+        $opt = [
+            'teacher_id'  => $uid,
+            'model'       => $model,
+            'messages'    => $messages,
+            'temperature' => $temperature,
+            'source'      => 'playground',
+            'ip'          => (string)$this->request->ip(),
+        ];
+        if ($maxTokens > 0) $opt['max_tokens'] = $maxTokens;
+
+        $res = AiProxy::streamChat($opt, function ($delta) use ($sseWrite, $respId, $created, $model) {
+            if (strpos($delta, '__SWITCH__') === 0) {
+                echo ": switch-channel " . substr($delta, 10) . "\n\n";
+                @ob_flush(); @flush();
+                return;
+            }
+            $sseWrite([
+                'id' => $respId, 'object' => 'pg.chunk', 'created' => $created, 'model' => $model,
+                'choices' => [['index' => 0, 'delta' => ['content' => $delta], 'finish_reason' => null]],
+            ]);
+        });
+
+        if (empty($res['ok'])) {
+            $this->sseError($res['msg']);
+            return;
+        }
+
+        $p = intval($res['usage']['prompt_tokens']);
+        $c = intval($res['usage']['completion_tokens']);
+        $points = (float)$res['points'];
+        $sseWrite([
+            'id' => $respId, 'object' => 'pg.chunk', 'created' => $created, 'model' => $model,
+            'choices' => [['index' => 0, 'delta' => new \stdClass(), 'finish_reason' => 'stop']],
+            'usage' => [
+                'prompt_tokens' => $p, 'completion_tokens' => $c, 'total_tokens' => $p + $c,
+                'points' => $points, 'channel_id' => (int)$res['channel_id'],
+            ],
+        ]);
+        echo "data: [DONE]\n\n";
+        @ob_flush(); @flush();
+    }
+
+    private function sseError($msg)
+    {
+        @header('Content-Type: text/event-stream; charset=utf-8');
+        @header('X-Accel-Buffering: no');
+        echo 'data: ' . json_encode(['error' => ['message' => $msg]], JSON_UNESCAPED_UNICODE) . "\n\n";
+        echo "data: [DONE]\n\n";
+        @ob_flush(); @flush();
+    }
+
     /** 我的最近调用记录（操练场 + 外部 API），用于右下角对照 */
     public function history()
     {

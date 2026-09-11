@@ -132,14 +132,20 @@ class AiChannel extends Base
         $baseUrl = trim((string)(isset($data['base_url']) ? $data['base_url'] : ''));
         $key     = trim((string)(isset($data['api_key']) ? $data['api_key'] : ''));
         $id      = intval(isset($data['id']) ? $data['id'] : 0);
+        $type    = trim((string)(isset($data['type']) ? $data['type'] : 'openai'));
 
         // 编辑场景下未重填 Key，则取库里已保存的那把
         if ($key === '' && $id > 0) {
             $row = AiChannelModel::get($id);
-            if ($row) $key = $row->plainKey();
+            if ($row) {
+                $key = $row->plainKey();
+                if ($type === '' || $type === 'openai') {
+                    $type = (string)$row->getData('type');
+                }
+            }
         }
 
-        $res = AiConfig::fetchModels($baseUrl, $key);
+        $res = AiConfig::fetchModels($baseUrl, $key, $type);
         if (!$res['ok']) {
             return $this->fail($res['msg']);
         }

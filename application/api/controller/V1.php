@@ -82,10 +82,6 @@ class V1 extends Base
             $this->abortJson(403, '该令牌未被授权调用模型：' . $model, 'invalid_request_error');
         }
 
-        if (!empty($body['stream'])) {
-            $this->abortJson(400, '暂不支持流式输出（stream=true），请改用非流式调用', 'invalid_request_error');
-        }
-
         $messages = isset($body['messages']) && is_array($body['messages']) ? $body['messages'] : [];
         $clean    = [];
         foreach ($messages as $m) {
@@ -97,6 +93,10 @@ class V1 extends Base
         }
         if (!$clean) {
             $this->abortJson(400, 'messages 不能为空，且需为 [{role,content}] 结构', 'invalid_request_error');
+        }
+
+        if (!empty($body['stream'])) {
+            return $this->streamChatCompletions($body, $model, $clean);
         }
 
         $res = AiProxy::chat([
@@ -137,6 +137,121 @@ class V1 extends Base
                 'total_tokens'      => $p + $c,
             ],
         ]);
+    }
+
+    /**
+     * 流式输出（SSE：Server-Sent Events）
+     * - 关闭输出缓冲，逐 chunk flush
+     * - 强制禁用 nginx 等反代的缓冲
+     * - 首包携带 role，最后一包含 usage + points + channel
+     */
+    private function streamChatCompletions(array $body, $model, array $clean)
+    {
+        // 关闭 PHP 端所有缓冲（保证 flush 真的把字节推给客户端）
+        while (ob_get_level() > 0) { @ob_end_clean(); }
+        @ob_implicit_flush(true);
+        @ini_set('output_buffering', '0');
+        @ini_set('zlib.output_compression', '0');
+
+        $respId = 'chatcmpl-' . bin2hex(function_exists('random_bytes') ? random_bytes(8) : openssl_random_pseudo_bytes(8));
+        $created = time();
+        $sentSwitch = false;
+
+        // 写一帧 SSE 的辅助
+        $sseWrite = function ($payload) {
+            echo 'data: ' . json_encode($payload, JSON_UNESCAPED_UNICODE) . "\n\n";
+            @ob_flush();
+            @flush();
+        };
+        // 错误帧
+        $sseError = function ($message, $type = 'upstream_error', $code = null) use ($sseWrite) {
+            $sseWrite([
+                'error' => ['message' => $message, 'type' => $type, 'code' => $code],
+            ]);
+            echo "data: [DONE]\n\n";
+            @ob_flush();
+            @flush();
+        };
+
+        // 响应头
+        @header('Content-Type: text/event-stream; charset=utf-8');
+        @header('Cache-Control: no-cache, no-transform');
+        @header('Connection: keep-alive');
+        @header('X-Accel-Buffering: no'); // 告诉 nginx 别缓存响应
+        @http_response_code(200);
+
+        // 首包（role 提示客户端这是 assistant 流）
+        $sseWrite([
+            'id'      => $respId,
+            'object'  => 'chat.completion.chunk',
+            'created' => $created,
+            'model'   => $model,
+            'choices' => [
+                ['index' => 0, 'delta' => ['role' => 'assistant'], 'finish_reason' => null],
+            ],
+        ]);
+
+        $res = AiProxy::streamChat([
+            'teacher_id'  => (int)$this->teacher->id,
+            'token_id'    => (int)$this->tokenRow->id,
+            'model'       => $model,
+            'messages'    => $clean,
+            'temperature' => isset($body['temperature']) ? floatval($body['temperature']) : 0.7,
+            'max_tokens'  => isset($body['max_tokens']) ? intval($body['max_tokens']) : 0,
+            'source'      => 'api',
+            'ip'          => (string)request()->ip(),
+        ], function ($delta) use ($sseWrite, $respId, $created, $model, &$sentSwitch) {
+            // 内部"换渠道"信号：__SWITCH__<id>|<name>
+            if (strpos($delta, '__SWITCH__') === 0) {
+                if (!$sentSwitch) {
+                    $sentSwitch = true;
+                    // 用 ping 注释让客户端能感知，不影响正文解析
+                    echo ": switch-channel " . substr($delta, 10) . "\n\n";
+                    @ob_flush(); @flush();
+                }
+                return;
+            }
+            $sseWrite([
+                'id'      => $respId,
+                'object'  => 'chat.completion.chunk',
+                'created' => $created,
+                'model'   => $model,
+                'choices' => [
+                    ['index' => 0, 'delta' => ['content' => $delta], 'finish_reason' => null],
+                ],
+            ]);
+        });
+
+        if (empty($res['ok'])) {
+            $isQuota = (strpos($res['msg'], '额度') !== false);
+            $sseError($res['msg'], $isQuota ? 'insufficient_quota' : 'upstream_error');
+            return;
+        }
+
+        $p = intval($res['usage']['prompt_tokens']);
+        $c = intval($res['usage']['completion_tokens']);
+        $points = (float)$res['points'];
+
+        // 终止块：携带 finish_reason + usage
+        $sseWrite([
+            'id'      => $respId,
+            'object'  => 'chat.completion.chunk',
+            'created' => $created,
+            'model'   => $model,
+            'choices' => [
+                ['index' => 0, 'delta' => new \stdClass(), 'finish_reason' => 'stop'],
+            ],
+            'usage' => [
+                'prompt_tokens'     => $p,
+                'completion_tokens' => $c,
+                'total_tokens'      => $p + $c,
+                'points'            => $points,
+                'channel_id'        => (int)$res['channel_id'],
+            ],
+        ]);
+        // 显式结束
+        echo "data: [DONE]\n\n";
+        @ob_flush(); @flush();
     }
 
     /** GET /v1/models */

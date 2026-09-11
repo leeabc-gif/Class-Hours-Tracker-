@@ -116,13 +116,13 @@ class AiConfig
     }
 
     /**
-     * 从 OpenAI 兼容接口拉取模型列表（GET {base}/models）
-     *
-     * @param string $chatUrl 对话接口地址（…/v1/chat/completions），自动推导 /models 地址
-     * @param string $key     API Key（调用方负责兜底已保存的 Key）
-     * @return array ['ok'=>bool, 'msg'=>'', 'models'=>[]]
+     * 从上游拉取模型列表。按渠道 $type 分发到不同端点：
+     *   - openai  / qwen / deepseek / custom：GET {base}/models（OpenAI 兼容）
+     *   - claude  ：用 Anthropic 兼容代理（绝大多数第三方中转都暴露 /v1/models）
+     *   - gemini  ：GET {base}/v1beta/models?key=KEY（Google AI Studio 官方端点）
+     *   失败时统一返回 {ok:false, msg, models:[]}
      */
-    public static function fetchModels($chatUrl, $key)
+    public static function fetchModels($chatUrl, $key, $type = 'openai')
     {
         $chatUrl = trim((string)$chatUrl);
         if ($chatUrl === '' || !preg_match('#^https?://#i', $chatUrl)) {
@@ -143,18 +143,34 @@ class AiConfig
             return ['ok' => false, 'msg' => '当前 PHP 未启用 curl 扩展', 'models' => []];
         }
 
+        $type = in_array($type, ['openai', 'claude', 'qwen', 'deepseek', 'gemini', 'custom'], true) ? $type : 'openai';
+
+        if ($type === 'gemini') {
+            return self::fetchModelsGemini($chatUrl, $key);
+        }
+        // openai / claude / qwen / deepseek / custom：均按 OpenAI 兼容 GET /models 处理
+        return self::fetchModelsOpenaiCompatible($chatUrl, $key);
+    }
+
+    /** OpenAI 兼容（也覆盖 Claude / 通义 / DeepSeek / 自定义中转） */
+    private static function fetchModelsOpenaiCompatible($chatUrl, $key)
+    {
         $modelsUrl = self::modelsUrlFrom($chatUrl);
+        $resp = null; $httpCode = 0; $err = '';
         $ch = curl_init($modelsUrl);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $key],
+            CURLOPT_HTTPHEADER     => [
+                'Authorization: Bearer ' . $key,
+                'Accept: application/json',
+            ],
             CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_TIMEOUT        => 15,
             CURLOPT_MAXREDIRS      => 3,
             CURLOPT_SSL_VERIFYPEER => true,
         ]);
         $resp = curl_exec($ch);
-        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $err = curl_error($ch);
         curl_close($ch);
 
@@ -162,26 +178,86 @@ class AiConfig
             return ['ok' => false, 'msg' => '请求模型列表失败：' . $err, 'models' => []];
         }
         if ($httpCode < 200 || $httpCode >= 300) {
-            return ['ok' => false, 'msg' => '接口返回 HTTP ' . $httpCode . '，请检查接口地址与 Key', 'models' => []];
+            $snippet = is_string($resp) ? mb_substr(trim($resp), 0, 200) : '';
+            return ['ok' => false, 'msg' => '接口返回 HTTP ' . $httpCode . ($snippet ? '：' . $snippet : ''), 'models' => []];
         }
         if (!is_string($resp) || strlen($resp) > 2097152) {
             return ['ok' => false, 'msg' => '模型列表响应异常', 'models' => []];
         }
         $json = json_decode($resp, true);
-        if (!is_array($json) || !isset($json['data']) || !is_array($json['data'])) {
-            return ['ok' => false, 'msg' => '返回内容不是 OpenAI 兼容的模型列表格式', 'models' => []];
+        if (!is_array($json)) {
+            return ['ok' => false, 'msg' => '返回内容不是 JSON', 'models' => []];
         }
         $ids = [];
-        foreach ($json['data'] as $m) {
-            if (is_array($m) && !empty($m['id'])) {
-                $ids[] = (string) $m['id'];
+        // OpenAI 格式：{data:[{id:"..."}]}
+        if (isset($json['data']) && is_array($json['data'])) {
+            foreach ($json['data'] as $m) {
+                if (is_array($m) && !empty($m['id'])) $ids[] = (string)$m['id'];
             }
+        }
+        // 另一种常见格式：[{id:"..."}]
+        if (!$ids && array_is_list($json)) {
+            foreach ($json as $m) {
+                if (is_array($m) && !empty($m['id'])) $ids[] = (string)$m['id'];
+            }
+        }
+        if (!$ids) {
+            return ['ok' => false, 'msg' => '该接口未返回任何模型 id', 'models' => []];
         }
         $ids = array_values(array_unique($ids));
         sort($ids, SORT_STRING);
-        if (!$ids) {
-            return ['ok' => false, 'msg' => '该接口未返回任何模型', 'models' => []];
+        return ['ok' => true, 'msg' => '', 'models' => $ids];
+    }
+
+    /**
+     * Google Gemini 官方：GET {base}/v1beta/models?key=KEY
+     * 响应：{models:[{name:"models/gemini-1.5-flash", ...}]}，需把 name 末段抽出来
+     */
+    private static function fetchModelsGemini($chatUrl, $key)
+    {
+        $base = rtrim($chatUrl, '/');
+        // 用户填的可能是 …/v1beta/…/chat/completions 之类的，统一把末尾的 /chat/completions 去掉再拼 models
+        $base = preg_replace('#/chat/completions/?$#i', '', $base);
+        $base = rtrim($base, '/');
+        $url  = $base . '/v1beta/models?key=' . urlencode($key) . '&pageSize=200';
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER     => ['Accept: application/json'],
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT        => 15,
+            CURLOPT_MAXREDIRS      => 3,
+            CURLOPT_SSL_VERIFYPEER => true,
+        ]);
+        $resp = curl_exec($ch);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $err = curl_error($ch);
+        curl_close($ch);
+
+        if ($err !== '') {
+            return ['ok' => false, 'msg' => '请求 Gemini 模型列表失败：' . $err, 'models' => []];
         }
+        if ($httpCode < 200 || $httpCode >= 300) {
+            $snippet = is_string($resp) ? mb_substr(trim($resp), 0, 200) : '';
+            return ['ok' => false, 'msg' => 'Gemini 接口返回 HTTP ' . $httpCode . ($snippet ? '：' . $snippet : ''), 'models' => []];
+        }
+        $json = json_decode($resp, true);
+        if (!is_array($json) || empty($json['models']) || !is_array($json['models'])) {
+            return ['ok' => false, 'msg' => 'Gemini 返回内容不是预期格式', 'models' => []];
+        }
+        $ids = [];
+        foreach ($json['models'] as $m) {
+            $name = isset($m['name']) ? (string)$m['name'] : '';
+            // name 形如 "models/gemini-1.5-flash" → 取末段
+            $short = $name !== '' ? preg_replace('#^models/#', '', $name) : '';
+            if ($short !== '') $ids[] = $short;
+        }
+        $ids = array_values(array_unique($ids));
+        if (!$ids) {
+            return ['ok' => false, 'msg' => 'Gemini 接口未返回任何模型', 'models' => []];
+        }
+        sort($ids, SORT_STRING);
         return ['ok' => true, 'msg' => '', 'models' => $ids];
     }
 

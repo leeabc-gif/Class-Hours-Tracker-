@@ -251,7 +251,244 @@ class AiProxy
         return $out;
     }
 
-    /** 单一渠道转发 */
+    /**
+     * 流式聊天补全（SSE）
+     *
+     * 与 chat() 同样的渠道选路、计费、记日志，但响应正文按 SSE 逐 chunk 推给 $onDelta 回调。
+     * 渠道失败自动切下一个（不超过 MAX_TRY_CHANNELS）。
+     *
+     * @param array  $opt     同 chat()
+     * @param callable $onDelta function(string $delta): void  每收到一段正文调用一次
+     * @return array  {ok, msg, model, content, usage, points, channel_id, latency_ms, settled, quota}
+     *                $content 是 $onDelta 累积拼出的完整正文（用于日志/回退渲染）
+     */
+    public static function streamChat(array $opt, $onDelta)
+    {
+        if (!is_callable($onDelta)) {
+            return self::fail('流式回调不可调用');
+        }
+
+        $teacherId = intval(isset($opt['teacher_id']) ? $opt['teacher_id'] : 0);
+        if ($teacherId <= 0) return self::fail('缺少用户身份，无法计费');
+
+        $messages = isset($opt['messages']) && is_array($opt['messages']) ? $opt['messages'] : [];
+        if (!$messages) return self::fail('消息内容为空');
+
+        $source = isset($opt['source']) ? (string)$opt['source'] : 'chat';
+        if (!in_array($source, ['chat', 'playground', 'api'], true)) $source = 'chat';
+        $tokenId     = intval(isset($opt['token_id']) ? $opt['token_id'] : 0);
+        $temperature = isset($opt['temperature']) ? floatval($opt['temperature']) : 0.3;
+        $ip          = (string)(isset($opt['ip']) ? $opt['ip'] : '');
+
+        $strict = ($source !== 'chat');
+        $pre = QuotaService::preCheck($teacherId, $strict);
+        if (!$pre['ok']) {
+            return array_merge(self::fail($pre['msg']), ['quota' => QuotaService::summary($teacherId)]);
+        }
+
+        $model = trim((string)(isset($opt['model']) ? $opt['model'] : ''));
+        if ($model === '') $model = self::defaultModel();
+        if ($model === '') {
+            return self::fail('未指定模型，且系统未配置默认模型（请在「AI 渠道」中先添加渠道）');
+        }
+
+        $channels = self::pickChannels($model);
+        if (!$channels) {
+            return self::fail('尚未配置任何 AI 渠道，请联系管理员先在「AI 渠道」中添加');
+        }
+
+        $tried = 0;
+        $lastErr = '';
+        foreach ($channels as $ch) {
+            if ($tried >= self::MAX_TRY_CHANNELS) break;
+            $tried++;
+
+            $key = $ch->plainKey();
+            if ($key === '') {
+                $lastErr = '渠道「' . $ch->getData('name') . '」未配置 API Key';
+                continue;
+            }
+
+            // 给客户端一个"换渠道了"的信号，便于排查
+            try { @call_user_func($onDelta, '__SWITCH__' . (int)$ch->id . '|' . $ch->getData('name')); } catch (\Throwable $e) {}
+
+            $res = self::requestChannelStream($ch, $key, $model, $messages, $temperature, $opt, $onDelta);
+            if ($res['ok']) {
+                $ch->markOk();
+                $promptTokens     = intval($res['usage']['prompt_tokens']);
+                $completionTokens = intval($res['usage']['completion_tokens']);
+                $points           = AiModel::cost($model, $promptTokens, $completionTokens);
+
+                $settle = QuotaService::settle($teacherId, $points);
+                AiUsageLog::record([
+                    'teacher_id'        => $teacherId,
+                    'token_id'          => $tokenId,
+                    'channel_id'        => (int)$ch->id,
+                    'model'             => $model,
+                    'prompt_tokens'     => $promptTokens,
+                    'completion_tokens' => $completionTokens,
+                    'points'            => $points,
+                    'latency_ms'        => $res['latency_ms'],
+                    'status'            => 1,
+                    'source'            => $source,
+                    'ip'                => $ip,
+                ]);
+
+                return [
+                    'ok'         => true,
+                    'msg'        => '',
+                    'model'      => $model,
+                    'content'    => $res['content'],
+                    'usage'      => ['prompt_tokens' => $promptTokens, 'completion_tokens' => $completionTokens],
+                    'points'     => $points,
+                    'channel_id' => (int)$ch->id,
+                    'latency_ms' => $res['latency_ms'],
+                    'settled'    => $settle['ok'] ? 1 : 0,
+                    'quota'      => QuotaService::summary($teacherId),
+                ];
+            }
+            $lastErr = $res['msg'];
+            $ch->markFail($res['msg']);
+        }
+
+        AiUsageLog::record([
+            'teacher_id' => $teacherId,
+            'token_id'   => $tokenId,
+            'channel_id' => 0,
+            'model'      => $model,
+            'status'     => 0,
+            'error_msg'  => $lastErr,
+            'source'     => $source,
+            'ip'         => $ip,
+        ]);
+
+        return array_merge(self::fail('AI 调用失败：' . $lastErr), ['quota' => QuotaService::summary($teacherId)]);
+    }
+
+    /** 单一渠道流式转发（curl WRITEFUNCTION + SSE 行解析） */
+    private static function requestChannelStream($chRow, $key, $model, array $messages, $temperature, array $opt, $onDelta)
+    {
+        $url = self::chatUrl($chRow->base_url);
+        $body = [
+            'model'       => $model,
+            'messages'    => $messages,
+            'temperature' => $temperature,
+            'stream'      => true,
+        ];
+        if (!empty($opt['max_tokens'])) $body['max_tokens'] = intval($opt['max_tokens']);
+
+        $start = microtime(true);
+        $accumulated = '';
+        $usage = ['prompt_tokens' => 0, 'completion_tokens' => 0];
+        $buffer = '';
+        $httpCode = 0;
+        $curlErr = '';
+        $firstByteOk = false;
+
+        $chh = curl_init($url);
+        curl_setopt_array($chh, [
+            CURLOPT_POST           => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER     => [
+                'Content-Type: application/json',
+                'Authorization: Bearer ' . $key,
+                'Accept: text/event-stream',
+            ],
+            CURLOPT_POSTFIELDS     => json_encode($body, JSON_UNESCAPED_UNICODE),
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT        => intval(isset($opt['timeout']) ? $opt['timeout'] : self::DEFAULT_TIMEOUT),
+            CURLOPT_MAXREDIRS      => 3,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_HEADER         => false,
+            CURLOPT_WRITEFUNCTION  => function ($ch, $chunk) use (&$buffer, &$accumulated, &$usage, &$firstByteOk, $onDelta) {
+                $firstByteOk = true;
+                $buffer .= $chunk;
+                // 按 \n\n 切事件
+                while (($pos = strpos($buffer, "\n\n")) !== false) {
+                    $event = substr($buffer, 0, $pos);
+                    $buffer = substr($buffer, $pos + 2);
+                    self::parseSseEvent($event, $accumulated, $usage, $onDelta);
+                }
+                return strlen($chunk);
+            },
+        ]);
+
+        $resp = curl_exec($chh);
+        $httpCode = (int)curl_getinfo($chh, CURLINFO_HTTP_CODE);
+        $curlErr = curl_error($chh);
+        curl_close($chh);
+        $latency = (int)round((microtime(true) - $start) * 1000);
+
+        if ($curlErr !== '') {
+            return ['ok' => false, 'msg' => '网络错误：' . $curlErr, 'latency_ms' => $latency, 'content' => '', 'usage' => $usage];
+        }
+        if ($httpCode < 200 || $httpCode >= 300) {
+            // 失败时把已读到的 body 当错误信息（OpenAI 流式失败会一次性回 JSON）
+            $snippet = is_string($resp) ? mb_substr(trim($resp), 0, 200) : '';
+            return ['ok' => false, 'msg' => 'HTTP ' . $httpCode . ($snippet ? '：' . $snippet : ''), 'latency_ms' => $latency, 'content' => '', 'usage' => $usage];
+        }
+        if (!$firstByteOk) {
+            return ['ok' => false, 'msg' => '上游流式响应为空', 'latency_ms' => $latency, 'content' => '', 'usage' => $usage];
+        }
+        if ($buffer !== '') {
+            // 兜底：最后一段可能不带 \n\n
+            self::parseSseEvent($buffer, $accumulated, $usage, $onDelta);
+        }
+        if ($accumulated === '') {
+            return ['ok' => false, 'msg' => '上游流式未返回有效内容', 'latency_ms' => $latency, 'content' => '', 'usage' => $usage];
+        }
+
+        return [
+            'ok'         => true,
+            'content'    => $accumulated,
+            'usage'      => $usage,
+            'latency_ms' => $latency,
+        ];
+    }
+
+    /**
+     * 解析一段 SSE 事件（一段可能多行）。
+     * 支持：event: / data: / 空行（已在外层按 \n\n 切好）。
+     * 终止信号 [DONE] 视作正常结束。
+     */
+    private static function parseSseEvent($event, &$accumulated, &$usage, $onDelta)
+    {
+        $dataLines = [];
+        foreach (preg_split("/\r\n|\n/", $event) as $line) {
+            if ($line === '' || strpos($line, ':') === false) continue;
+            $field = substr($line, 0, strpos($line, ':'));
+            $val   = ltrim(substr($line, strpos($line, ':') + 1));
+            if ($field === 'data') $dataLines[] = $val;
+        }
+        if (!$dataLines) return;
+        $payload = implode("\n", $dataLines);
+        if ($payload === '[DONE]') return;
+        $json = json_decode($payload, true);
+        if (!is_array($json)) return;
+
+        // 收 usage（部分上游在最后一帧才发）
+        if (isset($json['usage']) && is_array($json['usage'])) {
+            $usage['prompt_tokens']     = intval(isset($json['usage']['prompt_tokens'])     ? $json['usage']['prompt_tokens']     : $usage['prompt_tokens']);
+            $usage['completion_tokens'] = intval(isset($json['usage']['completion_tokens']) ? $json['usage']['completion_tokens'] : $usage['completion_tokens']);
+        }
+
+        // 收 delta.content
+        if (isset($json['choices'][0]['delta']['content'])) {
+            $delta = (string)$json['choices'][0]['delta']['content'];
+            if ($delta !== '') {
+                $accumulated .= $delta;
+                try { @call_user_func($onDelta, $delta); } catch (\Throwable $e) {}
+            }
+        } elseif (isset($json['choices'][0]['text'])) {
+            $delta = (string)$json['choices'][0]['text'];
+            if ($delta !== '') {
+                $accumulated .= $delta;
+                try { @call_user_func($onDelta, $delta); } catch (\Throwable $e) {}
+            }
+        }
+    }
+
+    /** 单一渠道转发（非流式） */
     private static function requestChannel($ch, $key, $model, array $messages, $temperature, array $opt)
     {
         $url = self::chatUrl($ch->base_url);

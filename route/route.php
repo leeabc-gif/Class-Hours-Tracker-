@@ -25,6 +25,9 @@ Route::get('hello/:name', 'index/hello');
 Route::post('v1/chat/completions', 'api/V1/chatCompletions');
 Route::get('v1/models', 'api/V1/models');
 
+// 站内 AI 操练场流式接口（SSE），与 OpenAI 兼容网关同结构
+Route::post('playground/stream', 'api/Playground/streamChat');
+
 // ---------------------------------------------------------------------
 // 外部课表导入（CSV / Excel）：upload 走 multipart/form-data，其余走 JSON
 // ---------------------------------------------------------------------

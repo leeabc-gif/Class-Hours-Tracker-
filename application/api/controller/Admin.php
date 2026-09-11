@@ -1076,6 +1076,17 @@ class Admin extends Base
      */
     public function updateStatus()
     {
+        // v1.1.3：新代码就位后，幂等补齐 v1.1.x 所需的 7 张新表
+        // （v1.1.3 作为"垫脚石版本"，upgrade.sql 不含 DDL 以兼容旧 UpdateService 的事务包；
+        //  建表改由新代码在首次访问更新页时惰性执行，此时新代码已到位不会再报
+        //  "There is no active transaction"）
+        try {
+            UpdateService::ensureSchemaIfNeeded();
+        } catch (\Throwable $e) {
+            // 建表失败不阻塞状态接口，仅记日志
+            \think\facade\Log::warning('[updateStatus] ensureSchema failed: ' . $e->getMessage());
+        }
+
         // 自动检查（静默、失败不影响状态返回）
         if ((string) $this->input('auto', '') === '1') {
             $this->autoCheckIfStale();

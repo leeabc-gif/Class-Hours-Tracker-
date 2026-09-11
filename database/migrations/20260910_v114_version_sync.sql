@@ -1,22 +1,27 @@
 -- ============================================================
--- v1.1.2 升级迁移
--- 作用：
---   1) 后台「系统更新」页改造：进页面自动检查新版本，有新版直接点"立即更新"
---      （代码改动在 application/api/controller/Admin.php 与
---        public/static/app/app.js，本 SQL 无需为此做结构变更）
---   2) 把默认 CNB 更新源从写死的 v1.0.8 改成 latest 入口，
---      让老站升级后能自动发现后续新版本 —— 见下方 UPDATE ks_setting。
---   3) 兼容「从 1.0.x 老站直升 1.1.2」：幂等补齐 AI 中转平台（5 张表）
---      与通知公告（2 张表）；已存在则不重建。
---   4) 同步 app_version → 1.1.2
+-- v1.1.4 升级迁移（首个「含 DDL」的正式版本）
 --
--- 注意（重要）：下面的 CREATE TABLE 属 DDL，MySQL 执行 DDL 会隐式提交事务。
---   v1.1.1 起 UpdateService 已改为「含 DDL 时不再开事务」并在
---   commit/rollBack 前复查 inTransaction()，故不会再抛
---   "There is no active transaction"。请勿把本文件的 DDL 手工包进事务。
--- 课表导入（CSV/Excel）复用已有 ks_lesson，无需新表。
+-- 为什么本文件可以安全含 DDL：
+--   v1.1.0~v1.1.2 的 upgrade.sql 含 7 个 CREATE TABLE，但执行升级的是站点上的
+--   旧版 UpdateService，它用 beginTransaction() 包住整份 SQL，MySQL 的 DDL 会隐式提交，
+--   第一条 CREATE 之后事务消失，commit() 抛 "There is no active transaction" → 升级失败（死锁）。
+--   v1.1.3 是「垫脚石版本」：upgrade.sql 纯 DML、不含 DDL，旧 UpdateService 也能安全跑完，
+--   把修复后的 UpdateService 部署到位。装完 v1.1.3 的站点跑的就是修复版 UpdateService，
+--   已能正确处理「含 DDL 的 upgrade.sql」（DDL 隐式提交不再报错）。
+--
+-- 本文件承担被 v1.1.3 推迟的两件事：
+--   1) 补齐 AI 中转平台 5 张表 + 通知公告 2 张表（CREATE TABLE IF NOT EXISTS，幂等）
+--   2) 把 AI 额度/用量金额列精度统一提升到 DECIMAL(16,6)
+--      （New API 风格按实际 token 倍率计费会产生 sub-cent 点数，2 位小数会被四舍五入吞掉）
+--
+-- 安全性要点（防止半升级）：
+--   * 先 CREATE TABLE IF NOT EXISTS（16,6 精度），再 ALTER 提升精度（幂等 MODIFY）。
+--     若表尚不存在（v1.1.3 站点尚未触发 ensureSchemaIfNeeded 的情况）→ CREATE 建出 16,6 表，
+--     ALTER 变 no-op；若表已存在且为 14,2 → CREATE 跳过，ALTER 提升到 16,6。两种顺序均成功。
+--   * 全程不依赖事务（修复版 UpdateService 检测到 DDL 会跳过事务，纯 DML 才开事务）。
 -- ============================================================
 
+-- ① 渠道：多厂商上游（OpenAI / Claude / 通义 / DeepSeek / Gemini / 自定义 …）
 CREATE TABLE IF NOT EXISTS `ks_ai_channel` (
   `id`         int(10) unsigned NOT NULL AUTO_INCREMENT,
   `name`       varchar(64)  NOT NULL DEFAULT '' COMMENT '渠道名，如 OpenAI-主用',
@@ -34,6 +39,7 @@ CREATE TABLE IF NOT EXISTS `ks_ai_channel` (
   KEY `idx_status` (`status`,`priority`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI渠道(多厂商)';
 
+-- ② 模型与倍率：计费单价（点数 = prompt*prompt_ratio + completion*completion_ratio）
 CREATE TABLE IF NOT EXISTS `ks_ai_model` (
   `id`               int(10) unsigned NOT NULL AUTO_INCREMENT,
   `model_key`        varchar(100) NOT NULL DEFAULT '' COMMENT '模型标识，如 gpt-4o-mini',
@@ -47,6 +53,7 @@ CREATE TABLE IF NOT EXISTS `ks_ai_model` (
   UNIQUE KEY `uk_model` (`model_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI模型与计费倍率';
 
+-- ③ API 令牌：教师拿去外部调用的 sk- 密钥（明文仅创建时展示一次）
 CREATE TABLE IF NOT EXISTS `ks_ai_token` (
   `id`           int(10) unsigned NOT NULL AUTO_INCREMENT,
   `teacher_id`   int(10) unsigned NOT NULL DEFAULT 0 COMMENT '所属教师',
@@ -64,6 +71,7 @@ CREATE TABLE IF NOT EXISTS `ks_ai_token` (
   KEY `idx_teacher` (`teacher_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='教师API令牌(sk-)';
 
+-- ④ 教师额度：总余额 + 日/周/月周期限额（周期到点自动清零 used）
 CREATE TABLE IF NOT EXISTS `ks_ai_quota` (
   `id`               int(10) unsigned NOT NULL AUTO_INCREMENT,
   `teacher_id`       int(10) unsigned NOT NULL DEFAULT 0,
@@ -83,6 +91,7 @@ CREATE TABLE IF NOT EXISTS `ks_ai_quota` (
   UNIQUE KEY `uk_teacher` (`teacher_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='教师AI额度(含日周月周期)';
 
+-- ⑤ 用量日志：计费、审计、统计的唯一依据
 CREATE TABLE IF NOT EXISTS `ks_ai_usage_log` (
   `id`                int(10) unsigned NOT NULL AUTO_INCREMENT,
   `teacher_id`        int(10) unsigned NOT NULL DEFAULT 0,
@@ -91,7 +100,7 @@ CREATE TABLE IF NOT EXISTS `ks_ai_usage_log` (
   `model`             varchar(100) NOT NULL DEFAULT '',
   `prompt_tokens`     int(11) NOT NULL DEFAULT 0,
   `completion_tokens` int(11) NOT NULL DEFAULT 0,
-  `points`            decimal(12,4) NOT NULL DEFAULT '0.0000' COMMENT '本次消耗点数',
+  `points`            decimal(16,6) NOT NULL DEFAULT '0.000000' COMMENT '本次消耗点数',
   `latency_ms`        int(11) NOT NULL DEFAULT 0,
   `status`            tinyint(1) NOT NULL DEFAULT 1 COMMENT '1成功 0失败',
   `error_msg`         varchar(500) NOT NULL DEFAULT '',
@@ -103,6 +112,7 @@ CREATE TABLE IF NOT EXISTS `ks_ai_usage_log` (
   KEY `idx_created` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI用量日志';
 
+-- ⑥ 通知公告
 CREATE TABLE IF NOT EXISTS `ks_notice` (
   `id`           int(10) unsigned NOT NULL AUTO_INCREMENT,
   `title`        varchar(200) NOT NULL DEFAULT '',
@@ -118,6 +128,7 @@ CREATE TABLE IF NOT EXISTS `ks_notice` (
   KEY `idx_created` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='通知公告';
 
+-- ⑦ 公告已读回执
 CREATE TABLE IF NOT EXISTS `ks_notice_read` (
   `id`        int(10) unsigned NOT NULL AUTO_INCREMENT,
   `notice_id` int(10) unsigned NOT NULL DEFAULT 0,
@@ -127,28 +138,24 @@ CREATE TABLE IF NOT EXISTS `ks_notice_read` (
   UNIQUE KEY `uk_nr` (`notice_id`,`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='公告已读回执';
 
--- ------------------------------------------------------------
--- v1.1.2：把「写死到具体 tag」的 CNB 默认更新源升级为 latest 入口
---
--- 背景：v1.0.8 时因 CNB 的 latest/download 直链会 404，代码里把默认源
---   写死成 .../releases/download/v1.0.8/manifest.json。老站数据库里若
---   存过这个值，即使升级到新版也仍然指向 v1.0.8，永远发现不了新版本。
---   v1.1.2 起 UpdateService 会抓 /-/releases 列表自动挑最新 tag，
---   所以这里把历史写死值清成空串，让代码回落到新的默认 latest 入口。
---   仅清理"官方写死值"，管理员自定义的第三方地址一律不动。
--- ------------------------------------------------------------
-UPDATE `ks_setting`
-   SET `cfg_value` = ''
- WHERE `cfg_key` = 'update_manifest_url'
-   AND `cfg_value` LIKE 'https://cnb.cool/bmayan/class-hours-tracker/-/releases/download/v1.%/manifest.json';
+-- ⑧ 精度提升（幂等 MODIFY）：表已存在且为旧精度时提升到 16,6；
+--    上面 CREATE 已是 16,6 则此 ALTER 为 no-op，两种顺序均安全。
+ALTER TABLE `ks_ai_quota`
+  MODIFY COLUMN `balance`       DECIMAL(16,6) NOT NULL DEFAULT '0.000000' COMMENT '总余额点数（管理员分配）',
+  MODIFY COLUMN `total_used`    DECIMAL(16,6) NOT NULL DEFAULT '0.000000' COMMENT '累计消耗',
+  MODIFY COLUMN `daily_limit`   DECIMAL(16,6) NOT NULL DEFAULT '0.000000' COMMENT '日限额，0=不限',
+  MODIFY COLUMN `weekly_limit`  DECIMAL(16,6) NOT NULL DEFAULT '0.000000' COMMENT '周限额，0=不限',
+  MODIFY COLUMN `monthly_limit` DECIMAL(16,6) NOT NULL DEFAULT '0.000000' COMMENT '月限额，0=不限',
+  MODIFY COLUMN `daily_used`    DECIMAL(16,6) NOT NULL DEFAULT '0.000000',
+  MODIFY COLUMN `weekly_used`   DECIMAL(16,6) NOT NULL DEFAULT '0.000000',
+  MODIFY COLUMN `monthly_used`  DECIMAL(16,6) NOT NULL DEFAULT '0.000000';
 
--- 同步版本号
--- 注意：历史版本用 CAST(cfg_value AS DECIMAL) 比较是错的——MySQL 只取到第一个
---   小数点，'1.0.8'→1.000、'1.1.1'/'1.1.2'/'1.10.0' 全部→1.100，
---   会导致「已是更高版本的站被降级改写」。这里改用三段各补零到 4 位后
---   做字符串比较，保证只在「当前版本确实低于 1.1.2」时才写。
+ALTER TABLE `ks_ai_usage_log`
+  MODIFY COLUMN `points` DECIMAL(16,6) NOT NULL DEFAULT '0.000000' COMMENT '本次消耗点数';
+
+-- ⑨ 同步版本号到 1.1.4（三段各补零到 4 位后字符串比较，防止 1.10.0 被降级）
 UPDATE `ks_setting`
-   SET `cfg_value` = '1.1.2'
+   SET `cfg_value` = '1.1.4'
  WHERE `cfg_key` = 'app_version'
    AND (
         `cfg_value` IN ('', '0')
@@ -156,8 +163,8 @@ UPDATE `ks_setting`
           LPAD(SUBSTRING_INDEX(CONCAT(`cfg_value`, '.0.0'), '.', 1), 4, '0'), '.',
           LPAD(SUBSTRING_INDEX(SUBSTRING_INDEX(CONCAT(`cfg_value`, '.0.0'), '.', 2), '.', -1), 4, '0'), '.',
           LPAD(SUBSTRING_INDEX(SUBSTRING_INDEX(CONCAT(`cfg_value`, '.0.0'), '.', 3), '.', -1), 4, '0')
-        ) < '0001.0001.0002'
+        ) < '0001.0001.0004'
    );
 
 INSERT IGNORE INTO `ks_setting` (`cfg_key`, `cfg_value`, `remark`)
-VALUES ('app_version', '1.1.2', '系统当前版本（在线更新维护）');
+VALUES ('app_version', '1.1.4', '系统当前版本（在线更新维护）');

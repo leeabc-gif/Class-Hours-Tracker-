@@ -42,6 +42,8 @@ $migDir  = $root . '/database/migrations';
 $candidates = [
     $migDir . "/20260909_v{$plain}_version_sync.sql",
     $migDir . "/20260909_{$plain}_version_sync.sql",
+    $migDir . "/20260910_v{$plain}_version_sync.sql",
+    $migDir . "/20260910_{$plain}_version_sync.sql",
 ];
 $mig = '';
 foreach ($candidates as $c) {

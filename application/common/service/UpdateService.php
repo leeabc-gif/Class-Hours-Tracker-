@@ -69,6 +69,67 @@ class UpdateService
         return trim($v) !== '' ? trim($v) : (string) config('app.version', '1.0.0');
     }
 
+    /**
+     * 幂等补齐 v1.1.x 所需新增表（AI 中转 5 张 + 通知公告 2 张）。
+     *
+     * 背景（"垫脚石"问题）：v1.1.0~v1.1.2 的 upgrade.sql 含 7 个 CREATE TABLE，
+     * 但 1.0.x 站点上跑的旧 UpdateService 会把整份 SQL 包在事务里执行，MySQL 的
+     * DDL 会隐式提交事务，第一条 CREATE 之后 commit() 抛 "There is no active
+     * transaction"，升级失败 → 形成"必须先升级才能修复升级"的死锁。
+     *
+     * v1.1.3 解法：upgrade.sql 完全不含 DDL（纯 DML，旧代码可在事务中安全执行），
+     * 升级后文件就位（含新 UpdateService），由本方法在 updateStatus 首次被调用时
+     * 幂等建表。此时已运行新代码，即便 DDL 隐式提交也不会报错（新代码不用事务包
+     * 含 DDL 的 SQL）。
+     *
+     * 幂等保证：全部 CREATE TABLE IF NOT EXISTS + 以 Setting 里的 schema_version
+     * 标记位为开关，避免每次请求都重复执行。
+     */
+    public static function ensureSchemaIfNeeded()
+    {
+        // 标记位：已经补过就跳过（独立于 app_version，方便回滚/重装时强制重跑）
+        $mark = (string) Setting::get('schema_v11x_applied', '');
+        if ($mark === '1') {
+            return;
+        }
+        $schemaFile = self::rootPath() . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR . 'schema_v11x.sql';
+        if (!is_file($schemaFile)) {
+            // 老版本包里没这个文件就直接跳过，不要抛错阻塞主流程
+            return;
+        }
+        $sql = @file_get_contents($schemaFile);
+        if (!is_string($sql) || trim($sql) === '') {
+            return;
+        }
+        // schema 全部是 CREATE TABLE IF NOT EXISTS，DDL 隐式提交没关系，不开事务
+        $pdo = \app\common\service\Backup::rawPdo();
+        $statements = self::splitSqlStatements(self::stripSqlLineComments($sql));
+        $idx = 0;
+        foreach ($statements as $stmt) {
+            $idx++;
+            $stmt = trim($stmt);
+            if ($stmt === '' || stripos($stmt, '--') === 0) {
+                continue;
+            }
+            try {
+                $pdo->exec($stmt);
+            } catch (\Throwable $e) {
+                // 建表失败只记日志、不阻塞后台入口；下次进页面会再试
+                Log::warning('[schema] v11x statement #' . $idx . ' failed: ' . $e->getMessage(), [
+                    'stmt_index' => $idx,
+                    'stmt_preview' => mb_substr($stmt, 0, 200, 'UTF-8'),
+                ]);
+                return;
+            }
+        }
+        // 全部成功才打标记
+        try {
+            Setting::set('schema_v11x_applied', '1');
+        } catch (\Throwable $e) {
+            Log::warning('[schema] set schema_v11x_applied failed: ' . $e->getMessage());
+        }
+    }
+
     // ---------------------------------------------------------------
     // 第 1 步：检查更新
     // ---------------------------------------------------------------

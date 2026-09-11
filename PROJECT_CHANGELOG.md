@@ -1,4 +1,32 @@
-﻿## v1.1.3 · 2026-09-10 · 修复从 1.0.x / 1.1.x 在线升级必失败（升级 SQL 去 DDL）
+﻿## v1.1.4 · 2026-09-11 · AI 中转网关（真流式 + 多厂商）+ 补齐建表与额度精度
+
+### 新增
+- **AI 中转网关真流式（SSE）**：`/v1/chat/completions` 与 `/playground/stream` 现在逐 chunk 流式返回，
+  首包先发 `role`、末包带 `usage{points,channel_id}` 与 `[DONE]`，前端 Playground 实时累加渲染。
+- **多厂商通道 + 自动故障转移**：按 `priority` 权重选启用渠道，单次请求最多尝试 `MAX_TRY_CHANNELS=3`
+  个渠道，坏渠道（超时/5xx）通过 `__SWITCH__<id>|<name>` 透传信号自动切下一渠道，全程只记 1 条用量日志。
+- **按厂商拉取模型列表**：`AiConfig::fetchModels($url,$key,$type)` 按 type 分发 ——
+  Gemini 走 `/v1beta/models?key=`；OpenAI / Claude / 通义 / DeepSeek / 自定义 走 OpenAI 兼容 `GET /models`
+  （Anthropic 官方代理多数暴露 `/v1/models`，故 Claude 归 OpenAI 兼容分支）。
+
+### 修复
+- **额度「扣了钱没扣额度」**：旧定义余额/限额为 `DECIMAL(14,2)`，按实际 token 倍率计费产生 sub-cent 点数
+  （如 0.0036 点）被四舍五入吞掉（`1000 - 0.0036 → 1000.00`）。全部金额列提升到 `DECIMAL(16,6)`，
+  计费恢复精确（`bill_delta=0.0036` 正确扣减）。
+
+### 数据库（在线升级自动执行）
+- **补齐 7 张表**：AI 中转 5 张（`ks_ai_channel` / `ks_ai_model` / `ks_ai_token` / `ks_ai_quota` / `ks_ai_usage_log`）
+  + 通知公告 2 张（`ks_notice` / `ks_notice_read`）。v1.1.0~v1.1.2 因升级死锁一直没建，v1.1.3 垫脚石已打破死锁，
+  本版起 `upgrade.sql` 正式携带这些建表语句（全部 `CREATE TABLE IF NOT EXISTS`，幂等安全）。
+- 升级包同时携带上述精度提升 ALTER，已装站点升级后自动生效，无需手工执行迁移。
+
+### 说明
+- 本版是首个「含 DDL」的正式版本，之所以现在才安全：v1.1.3 已把修复后的 `UpdateService` 部署到所有站点，
+  它能正确处理「含 DDL 的 upgrade.sql」（DDL 隐式提交不再报错）。**从 1.0.x 升级请先升 v1.1.3 垫脚石版。**
+
+---
+
+## v1.1.3 · 2026-09-10 · 修复从 1.0.x / 1.1.x 在线升级必失败（升级 SQL 去 DDL）
 
 ### 修复
 - **致命：老站点点「在线更新」必报 `There is no active transaction`**。
