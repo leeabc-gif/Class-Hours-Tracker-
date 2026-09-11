@@ -107,6 +107,7 @@ CREATE TABLE `ks_class` (
   `name`          varchar(64)  NOT NULL DEFAULT '' COMMENT '班级名称',
   `department_id` int(10) unsigned NOT NULL DEFAULT 0 COMMENT '所属院系',
   `year`          smallint(5)  NOT NULL DEFAULT 0 COMMENT '入学年份，如 2023',
+  `join_code`     varchar(16)  NOT NULL DEFAULT '' COMMENT '学生自助注册口令，空=不开放',
   `status`        tinyint(1)   NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
   `sort`          int(11)      NOT NULL DEFAULT 0 COMMENT '排序',
   `remark`        varchar(255) NOT NULL DEFAULT '',
@@ -303,14 +304,14 @@ DROP TABLE IF EXISTS `ks_ai_quota`;
 CREATE TABLE `ks_ai_quota` (
   `id`               int(10) unsigned NOT NULL AUTO_INCREMENT,
   `teacher_id`       int(10) unsigned NOT NULL DEFAULT 0,
-  `balance`          decimal(14,2) NOT NULL DEFAULT '0.00' COMMENT '总余额点数（管理员分配）',
-  `total_used`       decimal(14,2) NOT NULL DEFAULT '0.00' COMMENT '累计消耗',
-  `daily_limit`      decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT '日限额，0=不限',
-  `weekly_limit`     decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT '周限额，0=不限',
-  `monthly_limit`    decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT '月限额，0=不限',
-  `daily_used`       decimal(12,2) NOT NULL DEFAULT '0.00',
-  `weekly_used`      decimal(12,2) NOT NULL DEFAULT '0.00',
-  `monthly_used`     decimal(12,2) NOT NULL DEFAULT '0.00',
+  `balance`          decimal(16,6) NOT NULL DEFAULT '0.000000' COMMENT '总余额点数（管理员分配）',
+  `total_used`       decimal(16,6) NOT NULL DEFAULT '0.000000' COMMENT '累计消耗',
+  `daily_limit`      decimal(16,6) NOT NULL DEFAULT '0.000000' COMMENT '日限额，0=不限',
+  `weekly_limit`     decimal(16,6) NOT NULL DEFAULT '0.000000' COMMENT '周限额，0=不限',
+  `monthly_limit`    decimal(16,6) NOT NULL DEFAULT '0.000000' COMMENT '月限额，0=不限',
+  `daily_used`       decimal(16,6) NOT NULL DEFAULT '0.000000',
+  `weekly_used`      decimal(16,6) NOT NULL DEFAULT '0.000000',
+  `monthly_used`     decimal(16,6) NOT NULL DEFAULT '0.000000',
   `daily_reset_at`   int(11) NOT NULL DEFAULT 0 COMMENT '下次日重置时间',
   `weekly_reset_at`  int(11) NOT NULL DEFAULT 0 COMMENT '下次周重置时间',
   `monthly_reset_at` int(11) NOT NULL DEFAULT 0 COMMENT '下次月重置时间',
@@ -326,20 +327,23 @@ DROP TABLE IF EXISTS `ks_ai_usage_log`;
 CREATE TABLE `ks_ai_usage_log` (
   `id`                int(10) unsigned NOT NULL AUTO_INCREMENT,
   `teacher_id`        int(10) unsigned NOT NULL DEFAULT 0,
+  `owner_type`        enum('teacher','student') NOT NULL DEFAULT 'teacher' COMMENT '调用主体类型',
+  `student_id`        int(10) unsigned NOT NULL DEFAULT 0 COMMENT 'owner_type=student 时的学生ID',
   `token_id`          int(10) unsigned NOT NULL DEFAULT 0 COMMENT '0=站内调用',
   `channel_id`        int(10) unsigned NOT NULL DEFAULT 0,
   `model`             varchar(100) NOT NULL DEFAULT '',
   `prompt_tokens`     int(11) NOT NULL DEFAULT 0,
   `completion_tokens` int(11) NOT NULL DEFAULT 0,
-  `points`            decimal(12,4) NOT NULL DEFAULT '0.0000' COMMENT '本次消耗点数',
+  `points`            decimal(16,6) NOT NULL DEFAULT '0.000000' COMMENT '本次消耗点数',
   `latency_ms`        int(11) NOT NULL DEFAULT 0,
   `status`            tinyint(1) NOT NULL DEFAULT 1 COMMENT '1成功 0失败',
   `error_msg`         varchar(500) NOT NULL DEFAULT '',
-  `source`            enum('chat','playground','api') NOT NULL DEFAULT 'chat',
+  `source`            enum('chat','playground','api','student') NOT NULL DEFAULT 'chat',
   `ip`                varchar(45) NOT NULL DEFAULT '',
   `created_at`        int(11) NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`),
   KEY `idx_teacher` (`teacher_id`,`created_at`),
+  KEY `idx_student` (`student_id`,`created_at`),
   KEY `idx_created` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI用量日志';
 
@@ -352,7 +356,7 @@ CREATE TABLE `ks_notice` (
   `title`        varchar(200) NOT NULL DEFAULT '',
   `content`      text COMMENT '正文（纯文本或简单 HTML）',
   `type`         enum('notice','announce') NOT NULL DEFAULT 'notice' COMMENT 'notice=通知 announce=公告',
-  `scope`        enum('all','teacher','admin') NOT NULL DEFAULT 'all' COMMENT '可见范围',
+  `scope`        enum('all','teacher','admin','student') NOT NULL DEFAULT 'all' COMMENT '可见范围',
   `pinned`       tinyint(1) NOT NULL DEFAULT 0 COMMENT '1置顶',
   `publisher_id` int(10) unsigned NOT NULL DEFAULT 0,
   `status`       tinyint(1) NOT NULL DEFAULT 1 COMMENT '1发布 0草稿/下架',
@@ -374,5 +378,135 @@ CREATE TABLE `ks_notice_read` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_nr` (`notice_id`,`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='公告已读回执';
+
+-- ----------------------------
+-- 19. 学生档案 / 登录账号（学号登录，独立于教师体系）
+-- ----------------------------
+DROP TABLE IF EXISTS `ks_student`;
+CREATE TABLE `ks_student` (
+  `id`            int(10) unsigned NOT NULL AUTO_INCREMENT,
+  `sno`           varchar(32)  NOT NULL DEFAULT '' COMMENT '学号（登录账号）',
+  `password`      varchar(255) NOT NULL DEFAULT '' COMMENT '密码哈希 bcrypt',
+  `name`          varchar(32)  NOT NULL DEFAULT '' COMMENT '姓名',
+  `gender`        tinyint(1)   NOT NULL DEFAULT 0 COMMENT '0未知 1男 2女',
+  `class_id`      int(10) unsigned NOT NULL DEFAULT 0 COMMENT '所属班级',
+  `year`          smallint(5)  NOT NULL DEFAULT 0 COMMENT '入学年份，如 2025',
+  `phone`         varchar(20)  NOT NULL DEFAULT '' COMMENT '联系电话',
+  `avatar`        varchar(255) NOT NULL DEFAULT '' COMMENT '头像地址',
+  `status`        tinyint(1)   NOT NULL DEFAULT 2 COMMENT '2待审核 1正常 0禁用',
+  `source`        enum('import','register') NOT NULL DEFAULT 'import' COMMENT 'import批量导入 register自助注册',
+  `last_login_at` int(11)      NOT NULL DEFAULT 0,
+  `last_login_ip` varchar(45)  NOT NULL DEFAULT '',
+  `created_at`    int(11)      NOT NULL DEFAULT 0,
+  `updated_at`    int(11)      NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_sno` (`sno`),
+  KEY `idx_class` (`class_id`),
+  KEY `idx_status` (`status`),
+  KEY `idx_year` (`year`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生档案与登录账号';
+
+-- ----------------------------
+-- 20. 学生出勤（一节 ks_lesson 对一个学生一条）
+-- ----------------------------
+DROP TABLE IF EXISTS `ks_student_attendance`;
+CREATE TABLE `ks_student_attendance` (
+  `id`          int(10) unsigned NOT NULL AUTO_INCREMENT,
+  `lesson_id`   int(10) unsigned NOT NULL DEFAULT 0 COMMENT '课时ID',
+  `student_id`  int(10) unsigned NOT NULL DEFAULT 0,
+  `class_id`    int(10) unsigned NOT NULL DEFAULT 0 COMMENT '冗余班级，便于按班录入/统计',
+  `status`      enum('present','absent','leave','late','early') NOT NULL DEFAULT 'present' COMMENT 'present出勤 absent缺勤 leave请假 late迟到 early早退',
+  `note`        varchar(255) NOT NULL DEFAULT '' COMMENT '备注',
+  `operator_id` int(10) unsigned NOT NULL DEFAULT 0 COMMENT '记录教师ID',
+  `created_at`  int(11)      NOT NULL DEFAULT 0,
+  `updated_at`  int(11)      NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_lesson_student` (`lesson_id`,`student_id`),
+  KEY `idx_student` (`student_id`),
+  KEY `idx_class` (`class_id`),
+  KEY `idx_lesson` (`lesson_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生出勤记录';
+
+-- ----------------------------
+-- 21. 学生成绩与评价
+-- ----------------------------
+DROP TABLE IF EXISTS `ks_student_score`;
+CREATE TABLE `ks_student_score` (
+  `id`          int(10) unsigned NOT NULL AUTO_INCREMENT,
+  `student_id`  int(10) unsigned NOT NULL DEFAULT 0,
+  `class_id`    int(10) unsigned NOT NULL DEFAULT 0 COMMENT '冗余班级',
+  `course_id`   int(10) unsigned NOT NULL DEFAULT 0,
+  `course_name` varchar(64)  NOT NULL DEFAULT '' COMMENT '课程名快照',
+  `term_id`     int(10) unsigned NOT NULL DEFAULT 0,
+  `title`       varchar(100) NOT NULL DEFAULT '' COMMENT '考核项，如 期中实操/平时表现',
+  `score`       decimal(6,2) DEFAULT NULL COMMENT '分数，NULL=仅评语',
+  `grade`       varchar(16)  NOT NULL DEFAULT '' COMMENT '等级，如 优/良/中/及格',
+  `comment`     varchar(1000) NOT NULL DEFAULT '' COMMENT '评语',
+  `recorded_by` int(10) unsigned NOT NULL DEFAULT 0 COMMENT '录入教师',
+  `created_at`  int(11)      NOT NULL DEFAULT 0,
+  `updated_at`  int(11)      NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  KEY `idx_student` (`student_id`),
+  KEY `idx_class` (`class_id`),
+  KEY `idx_course` (`course_id`),
+  KEY `idx_term` (`term_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生成绩与评价';
+
+-- ----------------------------
+-- 22. 学生 AI 额度（独立于教师 ks_ai_quota）
+-- ----------------------------
+DROP TABLE IF EXISTS `ks_student_ai_quota`;
+CREATE TABLE `ks_student_ai_quota` (
+  `id`               int(10) unsigned NOT NULL AUTO_INCREMENT,
+  `student_id`       int(10) unsigned NOT NULL DEFAULT 0,
+  `balance`          decimal(16,6) NOT NULL DEFAULT '0.000000' COMMENT '总余额点数（管理员/教师分配）',
+  `total_used`       decimal(16,6) NOT NULL DEFAULT '0.000000' COMMENT '累计消耗',
+  `daily_limit`      decimal(16,6) NOT NULL DEFAULT '0.000000' COMMENT '日限额，0=不限',
+  `weekly_limit`     decimal(16,6) NOT NULL DEFAULT '0.000000' COMMENT '周限额，0=不限',
+  `monthly_limit`    decimal(16,6) NOT NULL DEFAULT '0.000000' COMMENT '月限额，0=不限',
+  `daily_used`       decimal(16,6) NOT NULL DEFAULT '0.000000',
+  `weekly_used`      decimal(16,6) NOT NULL DEFAULT '0.000000',
+  `monthly_used`     decimal(16,6) NOT NULL DEFAULT '0.000000',
+  `daily_reset_at`   int(11) NOT NULL DEFAULT 0,
+  `weekly_reset_at`  int(11) NOT NULL DEFAULT 0,
+  `monthly_reset_at` int(11) NOT NULL DEFAULT 0,
+  `updated_at`       int(11) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_student` (`student_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生AI额度(含日周月周期)';
+
+-- ----------------------------
+-- 23. 学生 AI 答疑会话
+-- ----------------------------
+DROP TABLE IF EXISTS `ks_student_ai_conversation`;
+CREATE TABLE `ks_student_ai_conversation` (
+  `id`         int(10) unsigned NOT NULL AUTO_INCREMENT,
+  `student_id` int(10) unsigned NOT NULL DEFAULT 0,
+  `title`      varchar(100) NOT NULL DEFAULT '',
+  `created_at` int(11) NOT NULL DEFAULT 0,
+  `updated_at` int(11) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  KEY `idx_student` (`student_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生AI答疑会话';
+
+-- ----------------------------
+-- 24. 学生 AI 答疑消息（留存供审计 / 学情画像）
+-- ----------------------------
+DROP TABLE IF EXISTS `ks_student_ai_message`;
+CREATE TABLE `ks_student_ai_message` (
+  `id`              int(10) unsigned NOT NULL AUTO_INCREMENT,
+  `conversation_id` int(10) unsigned NOT NULL DEFAULT 0,
+  `student_id`      int(10) unsigned NOT NULL DEFAULT 0 COMMENT '冗余，便于按学生隔离与审计',
+  `role`            enum('user','assistant') NOT NULL DEFAULT 'user',
+  `content`         text COMMENT '消息正文',
+  `model`           varchar(100) NOT NULL DEFAULT '' COMMENT '本次应答使用的模型',
+  `points`          decimal(16,6) NOT NULL DEFAULT '0.000000' COMMENT '本次消耗点数',
+  `flagged`         tinyint(1) NOT NULL DEFAULT 0 COMMENT '审计标记 0正常 1可疑',
+  `created_at`      int(11) NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  KEY `idx_conv` (`conversation_id`),
+  KEY `idx_student` (`student_id`,`created_at`),
+  KEY `idx_flagged` (`flagged`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生AI答疑消息';
 
 SET FOREIGN_KEY_CHECKS = 1;

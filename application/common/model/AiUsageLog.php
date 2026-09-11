@@ -27,6 +27,9 @@ class AiUsageLog extends Model
     {
         $row = new self();
         $row->teacher_id        = intval(isset($data['teacher_id']) ? $data['teacher_id'] : 0);
+        $row->owner_type        = in_array((string)(isset($data['owner_type']) ? $data['owner_type'] : 'teacher'), ['teacher','student'], true)
+            ? (string)$data['owner_type'] : 'teacher';
+        $row->student_id        = intval(isset($data['student_id']) ? $data['student_id'] : 0);
         $row->token_id          = intval(isset($data['token_id']) ? $data['token_id'] : 0);
         $row->channel_id        = intval(isset($data['channel_id']) ? $data['channel_id'] : 0);
         $row->model             = substr((string)(isset($data['model']) ? $data['model'] : ''), 0, 100);
@@ -36,7 +39,7 @@ class AiUsageLog extends Model
         $row->latency_ms        = intval(isset($data['latency_ms']) ? $data['latency_ms'] : 0);
         $row->status            = !empty($data['status']) ? 1 : 0;
         $row->error_msg         = substr((string)(isset($data['error_msg']) ? $data['error_msg'] : ''), 0, 500);
-        $row->source            = in_array((string)(isset($data['source']) ? $data['source'] : 'chat'), ['chat', 'playground', 'api'], true)
+        $row->source            = in_array((string)(isset($data['source']) ? $data['source'] : 'chat'), ['chat', 'playground', 'api', 'student'], true)
             ? (string)$data['source'] : 'chat';
         $row->ip                = substr((string)(isset($data['ip']) ? $data['ip'] : ''), 0, 45);
         $row->created_at        = time();

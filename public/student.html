@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>学生端 - 课时系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<style>
+:root{--bs-primary:#0d6efd;--primary-rgb:13,110,253}
+body{background:#f0f2f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:14px;padding-bottom:80px}
+.page{display:none}.page.active{display:block}
+.card{border:none;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:12px}
+.card-h{padding:12px 16px;border-bottom:1px solid #f0f0f0;font-weight:600;display:flex;align-items:center;gap:8px}
+.card-b{padding:12px 16px}
+.stu-btn{border-radius:10px;padding:8px;font-weight:500}
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #eee;z-index:1000;display:flex;padding:4px 0;padding-bottom:env(safe-area-inset-bottom)}
+.bottom-nav .nav-item{flex:1;text-align:center;padding:4px 0;color:#999;font-size:11px;cursor:pointer}
+.bottom-nav .nav-item i{font-size:20px;display:block;margin-bottom:2px}
+.bottom-nav .nav-item.active{color:var(--bs-primary)}
+.chat-msg{padding:8px 12px;border-radius:12px;max-width:85%;margin-bottom:8px;word-break:break-word}
+.chat-msg.user{background:var(--bs-primary);color:#fff;margin-left:auto;border-bottom-right-radius:4px}
+.chat-msg.assistant{background:#e9ecef;color:#333;margin-right:auto;border-bottom-left-radius:4px}
+.lds-ring{display:inline-block;position:relative;width:20px;height:20px}
+.lds-ring div{box-sizing:border-box;display:block;position:absolute;width:16px;height:16px;margin:2px;border:2px solid #fff;border-radius:50%;animation:lds-ring 1.2s cubic-bezier(.5,0,.5,1) infinite;border-color:#fff transparent transparent transparent}
+@keyframes lds-ring{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+</style>
+</head><body>
+
+<div id="pageLogin" class="page active">
+  <div class="min-vh-100 d-flex align-items-center justify-content-center px-3" style="background:linear-gradient(135deg,#667eea,#764ba2)">
+    <div class="w-100" style="max-width:360px">
+      <div class="text-center mb-4"><i class="bi bi-mortarboard-fill" style="font-size:48px;color:#fff"></i><h4 class="text-white mt-2">课时管理系统</h4><p class="text-white-50 small">学生端</p></div>
+      <div class="card p-3">
+        <div class="mb-3"><label class="form-label small">学号</label><input id="loginSno" class="form-control" placeholder="输入学号" autocomplete="username"></div>
+        <div class="mb-3"><label class="form-label small">密码</label><input id="loginPwd" type="password" class="form-control" placeholder="输入密码" autocomplete="current-password"></div>
+        <button id="loginBtn" class="btn btn-primary w-100 stu-btn" onclick="doLogin()">登 录</button>
+        <div class="mt-2 text-center"><a href="#" class="small text-decoration-none" onclick="showPage('pageRegister')">没有账号？自助注册</a></div>
+      </div>
+      <div id="loginErr" class="alert alert-danger small mt-2 d-none"></div>
+    </div>
+  </div>
+</div>
+
+<div id="pageRegister" class="page">
+  <div class="min-vh-100 d-flex align-items-center justify-content-center px-3">
+    <div class="w-100" style="max-width:360px">
+      <h5 class="text-center mb-3"><i class="bi bi-person-plus me-1"></i>学生自助注册</h5>
+      <div class="card p-3">
+        <div class="mb-2"><label class="form-label small">学号</label><input id="regSno" class="form-control" placeholder="学号（4-32位字母数字）"></div>
+        <div class="mb-2"><label class="form-label small">姓名</label><input id="regName" class="form-control" placeholder="真实姓名"></div>
+        <div class="mb-2"><label class="form-label small">密码</label><input id="regPwd" type="password" class="form-control" placeholder="6-72位"></div>
+        <div class="mb-2"><label class="form-label small">班级口令（选填）</label><input id="regCode" class="form-control" placeholder="找班主任要班级口令"><div class="form-text">留空则入班待分配</div></div>
+        <button class="btn btn-primary w-100 stu-btn" onclick="doRegister()">提交注册</button>
+        <div class="mt-2 text-center"><a href="#" class="small text-decoration-none" onclick="showPage('pageLogin')">已有账号？去登录</a></div>
+      </div>
+      <div id="regErr" class="alert alert-danger small mt-2 d-none"></div>
+      <div id="regOk" class="alert alert-success small mt-2 d-none"></div>
+    </div>
+  </div>
+</div>
+
+<div id="pageHome" class="page">
+  <div class="px-3 pt-3 pb-2" style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff">
+    <div class="d-flex align-items-center gap-2 mb-1"><i class="bi bi-person-circle" style="font-size:32px"></i><div><div class="fw-bold" id="homeName">加载中…</div><div class="small opacity-75" id="homeClass"></div></div></div>
+    <div class="small mt-1 opacity-75"><i class="bi bi-mortarboard-fill me-1"></i><span id="homeSno"></span></div>
+  </div>
+  <div class="px-3 mt-2">
+    <div class="row g-2">
+      <div class="col-6"><div class="card text-center p-3" onclick="showPage('pageAttendance')"><i class="bi bi-calendar-check" style="font-size:24px;color:var(--bs-primary)"></i><div class="small mt-1">我的出勤</div></div></div>
+      <div class="col-6"><div class="card text-center p-3" onclick="showPage('pageScores')"><i class="bi bi-trophy" style="font-size:24px;color:#e67e22"></i><div class="small mt-1">成绩评价</div></div></div>
+      <div class="col-6"><div class="card text-center p-3" onclick="showPage('pageAi')"><i class="bi bi-robot" style="font-size:24px;color:#27ae60"></i><div class="small mt-1">AI 答疑</div></div></div>
+      <div class="col-6"><div class="card text-center p-3" onclick="doLogout()"><i class="bi bi-box-arrow-right" style="font-size:24px;color:#e74c3c"></i><div class="small mt-1">退出登录</div></div></div>
+    </div>
+  </div>
+</div>
+
+<div id="pageAttendance" class="page">
+  <div class="px-3 pt-3 pb-2 bg-primary text-white d-flex align-items-center gap-2">
+    <i class="bi bi-arrow-left" style="font-size:20px;cursor:pointer" onclick="showPage('pageHome')"></i>
+    <span class="fw-bold">我的出勤</span>
+  </div>
+  <div class="px-3 mt-2" id="attendanceList"><p class="text-muted text-center py-4">加载中…</p></div>
+</div>
+
+<div id="pageScores" class="page">
+  <div class="px-3 pt-3 pb-2 bg-primary text-white d-flex align-items-center gap-2">
+    <i class="bi bi-arrow-left" style="font-size:20px;cursor:pointer" onclick="showPage('pageHome')"></i>
+    <span class="fw-bold">成绩与评价</span>
+  </div>
+  <div class="px-3 mt-2" id="scoresList"><p class="text-muted text-center py-4">加载中…</p></div>
+</div>
+
+<div id="pageAi" class="page">
+  <div class="px-3 pt-3 pb-2 bg-success text-white d-flex align-items-center gap-2">
+    <i class="bi bi-arrow-left" style="font-size:20px;cursor:pointer" onclick="showPage('pageHome')"></i>
+    <span class="fw-bold">AI 答疑助手</span>
+    <div class="flex-grow-1"></div>
+    <i class="bi bi-trash" style="font-size:16px;cursor:pointer" onclick="clearChat()"></i>
+  </div>
+  <div class="px-3 mt-2" style="max-height:calc(100vh - 160px);overflow-y:auto" id="chatBox">
+    <div class="text-center text-muted small py-4">有什么问题可以问我～</div>
+  </div>
+  <div class="px-3 pb-3" style="position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #eee;padding-bottom:env(safe-area-inset-bottom)">
+    <div class="input-group mt-2">
+      <input id="chatInput" class="form-control" placeholder="输入问题..." style="border-radius:20px 0 0 20px" onkeydown="if(event.key==='Enter')doChat()">
+      <button class="btn btn-success" style="border-radius:0 20px 20px 0" onclick="doChat()"><i class="bi bi-send"></i></button>
+    </div>
+  </div>
+</div>
+
+<nav class="bottom-nav d-none" id="bottomNav">
+  <div class="nav-item active" onclick="showPage('pageHome')"><i class="bi bi-house-door"></i><span>首页</span></div>
+  <div class="nav-item" onclick="showPage('pageAttendance')"><i class="bi bi-calendar-check"></i><span>出勤</span></div>
+  <div class="nav-item" onclick="showPage('pageScores')"><i class="bi bi-trophy"></i><span>成绩</span></div>
+  <div class="nav-item" onclick="showPage('pageAi')"><i class="bi bi-robot"></i><span>AI</span></div>
+</nav>
+
+<script>
+const $ = id => document.getElementById(id);
+
+let _csrf = '';
+let _student = null;
+
+async function api(method, url, body){
+  const opt = {method, headers:{}};
+  if(method==='POST'){
+    opt.headers['Content-Type']='application/json';
+    if(_csrf) opt.headers['X-CSRF-Token']=_csrf;
+    if(body) opt.body=JSON.stringify(body);
+  }
+  const res = await fetch(url, opt);
+  const json = await res.json();
+  if(json.code===419){ _csrf=''; await getCsrf(); }
+  return json;
+}
+async function getCsrf(){
+  const r=await fetch('/api/auth/csrfToken');
+  const j=await r.json();
+  if(j.code===0 && j.data) _csrf=j.data.token;
+}
+async function POST(url,data){ return api('POST',url,data); }
+async function GET(url){ return api('GET',url); }
+
+function showErr(id,msg){ const el=$(id); if(el){ el.textContent=msg; el.classList.remove('d-none'); } }
+function hideErr(id){ const el=$(id); if(el) el.classList.add('d-none'); }
+
+function showPage(id){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  $(id).classList.add('active');
+  // 底部导航
+  const navMap={'pageHome':0,'pageAttendance':1,'pageScores':2,'pageAi':3};
+  document.querySelectorAll('.bottom-nav .nav-item').forEach((n,i)=>{
+    n.classList.toggle('active', i===navMap[id]);
+  });
+  const navPages=['pageHome','pageAttendance','pageScores','pageAi'];
+  $(id) && navPages.includes(id) ? $('bottomNav').classList.remove('d-none') : $('bottomNav').classList.add('d-none');
+  // 数据加载
+  if(id==='pageAttendance') loadAttendance();
+  if(id==='pageScores') loadScores();
+}
+
+// ========== 登录 ==========
+async function doLogin(){
+  hideErr('loginErr');
+  const sno=$('loginSno').value.trim(), pwd=$('loginPwd').value;
+  if(!sno||!pwd){ showErr('loginErr','请填写学号和密码'); return; }
+  $('loginBtn').disabled=true; $('loginBtn').innerHTML='<span class="spinner-border spinner-border-sm me-1"></span>登录中';
+  await getCsrf();
+  const r=await POST('/api/studentauth/login',{sno,password:pwd});
+  if(r.code!==0){ showErr('loginErr',r.msg); $('loginBtn').disabled=false; $('loginBtn').textContent='登 录'; return; }
+  _student=r.data.student;
+  $('loginBtn').disabled=false; $('loginBtn').textContent='登 录';
+  afterLogin();
+}
+function afterLogin(){
+  $('homeName').textContent=_student.name;
+  $('homeClass').textContent=_student.class_name||'未分配班级';
+  $('homeSno').textContent=_student.sno;
+  showPage('pageHome');
+}
+
+async function doRegister(){
+  hideErr('regErr'); hideErr('regOk');
+  const sno=$('regSno').value.trim(), name=$('regName').value.trim(), pwd=$('regPwd').value, code=$('regCode').value.trim();
+  if(!sno||!name||!pwd){ showErr('regErr','请填写必填项'); return; }
+  await getCsrf();
+  const r=await POST('/api/studentauth/register',{sno,name,password:pwd,class_join_code:code});
+  if(r.code!==0){ showErr('regErr',r.msg); return; }
+  $('regOk').textContent=r.msg; $('regOk').classList.remove('d-none');
+  $('regSno').value='';$('regName').value='';$('regPwd').value='';$('regCode').value='';
+}
+
+async function doLogout(){
+  await POST('/api/studentauth/logout');
+  _student=null;
+  showPage('pageLogin');
+}
+
+// ========== 出勤 ==========
+async function loadAttendance(){
+  const r=await GET('/api/studentportal/attendance?limit=50');
+  if(r.code!==0){ $('attendanceList').innerHTML='<p class="text-danger text-center py-4">'+r.msg+'</p>'; return; }
+  const list=r.data.list||[];
+  if(!list.length){ $('attendanceList').innerHTML='<div class="text-center text-muted py-4"><i class="bi bi-inbox" style="font-size:32px;display:block;margin-bottom:8px"></i>暂无出勤记录</div>'; return; }
+  const statusLabel={'present':'出勤','absent':'缺勤','leave':'请假','late':'迟到','early':'早退'};
+  const statusBadge={'present':'bg-success','absent':'bg-danger','leave':'bg-warning text-dark','late':'bg-info','early':'bg-secondary'};
+  $('attendanceList').innerHTML=list.map(function(r){
+    return '<div class="card"><div class="card-b d-flex justify-content-between align-items-center">'
+      +'<div><div class="fw-bold">'+esc(r.course_name||'课时 #'+r.lesson_id)+'</div>'
+      +'<div class="small text-muted">'+dateStr(r.created_at)+'</div></div>'
+      +'<span class="badge '+statusBadge[r.status]+'">'+statusLabel[r.status]+'</span>'
+      +'</div></div>';
+  }).join('');
+}
+
+// ========== 成绩 ==========
+async function loadScores(){
+  const r=await GET('/api/studentportal/scores');
+  if(r.code!==0){ $('scoresList').innerHTML='<p class="text-danger text-center py-4">'+r.msg+'</p>'; return; }
+  const list=r.data.list||[];
+  if(!list.length){ $('scoresList').innerHTML='<div class="text-center text-muted py-4"><i class="bi bi-inbox" style="font-size:32px;display:block;margin-bottom:8px"></i>暂无成绩记录</div>'; return; }
+  $('scoresList').innerHTML=list.map(function(r){
+    const scoreStr = r.score!==null ? r.score+'分' : r.grade||'—';
+    return '<div class="card"><div class="card-b">'
+      +'<div class="d-flex justify-content-between"><span class="fw-bold">'+esc(r.course_name)+'</span><span class="badge bg-primary">'+scoreStr+'</span></div>'
+      +'<div class="small text-muted">'+esc(r.title)+(r.comment?' · '+esc(r.comment):'')+'</div>'
+      +'</div></div>';
+  }).join('');
+}
+
+// ========== AI 答疑（基础版 - 非流式）==========
+let chatHistory=[];
+let currentConvId=0;
+
+async function doChat(){
+  const input=$('chatInput');
+  const msg=input.value.trim();
+  if(!msg) return;
+  input.value='';
+  appendChat('user',msg);
+  chatHistory.push({role:'user',content:msg});
+  // 显示加载动画
+  const box=$('chatBox');
+  const loadingId='chatLoading';
+  box.innerHTML+='<div class="chat-msg assistant" id="'+loadingId+'"><div class="lds-ring"><div></div><div></div><div></div><div></div></div> 思考中…</div>';
+  box.scrollTop=box.scrollHeight;
+  
+  const r=await POST('/api/studentportal/aiChat',{
+    message: msg,
+    conversation_id: currentConvId
+  });
+  const loadingEl = $(loadingId);
+  if(loadingEl) loadingEl.remove();
+  if(r.code!==0){
+    appendChat('assistant','❌ '+r.msg);
+    chatHistory.push({role:'assistant',content:r.msg});
+    return;
+  }
+  const reply=r.data.reply;
+  currentConvId=r.data.conversation_id||0;
+  appendChat('assistant',reply);
+  chatHistory.push({role:'assistant',content:reply});
+}
+
+function appendChat(role,content){
+  const box=$('chatBox');
+  box.innerHTML+='<div class="chat-msg '+role+'">'+esc(content)+'</div>';
+  box.scrollTop=box.scrollHeight;
+}
+
+function clearChat(){
+  currentConvId=0;
+  chatHistory=[];
+  $('chatBox').innerHTML='<div class="text-center text-muted small py-4">新的对话已开始～</div>';
+}
+
+// ========== 工具 ==========
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function dateStr(ts){
+  if(!ts) return '';
+  const d=new Date(ts*1000);
+  return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+}
+
+// ========== 启动 ==========
+(async function init(){
+  await getCsrf();
+  // 尝试恢复会话
+  const r = await GET('/api/studentauth/me');
+  if(r.code===0 && r.data && r.data.student){
+    _student=r.data.student;
+    afterLogin();
+  }
+})();
+</script>
+</body></html>

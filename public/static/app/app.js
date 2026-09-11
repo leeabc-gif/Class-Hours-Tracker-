@@ -545,6 +545,7 @@
         { g: '总览' },
         { p: 'dashboard', i: 'speedometer2', t: '全校看板' },
         { p: 'admin-users', i: 'people', t: '用户管理' },
+        { p: 'admin-students', i: 'people-fill', t: '学生管理' },
         { p: 'admin-meta', i: 'gear', t: '基础配置' },
         { p: 'admin-aihub', i: 'robot', t: 'AI 中转' },
         { p: 'admin-update', i: 'arrow-repeat', t: '系统更新' },
@@ -612,6 +613,7 @@
     dashboard: { t: '首页仪表盘', a: '个人课时工作台' },
     'admin-dashboard': { t: '全校数据看板', a: '管理员' },
     'admin-users': { t: '用户管理', a: '管理员' },
+    'admin-students': { t: '学生管理', a: '管理员' },
     'admin-meta': { t: '基础配置', a: '管理员' },
     'admin-aihub': { t: 'AI 中转管理', a: '渠道 · 模型倍率 · 额度分配' },
     'admin-update': { t: '系统更新', a: '在线升级 · 备份 · 回滚' },
@@ -3012,7 +3014,16 @@
       </div>
       <div class="mb-2"><label class="form-label">接口地址 Base URL</label><input id="achUrl" class="form-control" value="${c?esc(c.base_url):''}" placeholder="https://api.openai.com/v1"></div>
       <div class="mb-2"><label class="form-label">API Key</label><input id="achKey" type="password" class="form-control" autocomplete="new-password" placeholder="${c&&c.key_configured?'留空表示保留原 Key':'如 sk-xxxxxx'}"></div>
-      <div class="mb-2"><label class="form-label">模型白名单（逗号分隔，留空=不限制）</label><input id="achModels" class="form-control" value="${c?esc((c.models||[]).join(',')):''}" placeholder="gpt-4o-mini,gpt-4o"></div>
+      <div class="mb-2">
+        <div class="d-flex justify-content-between align-items-center">
+          <label class="form-label mb-1">模型白名单（逗号分隔，留空=不限制）</label>
+          <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2" style="min-height:30px" onclick="KS.aiChannelFetchModels(this)">
+            <i class="bi bi-arrow-down-circle me-1"></i>拉取模型
+          </button>
+        </div>
+        <input id="achModels" class="form-control" value="${c?esc((c.models||[]).join(',')):''}" placeholder="gpt-4o-mini,gpt-4o">
+        <div class="form-text" id="achModelsHint">填好上方「接口地址 + API Key + 厂商类型」后点「拉取模型」，自动回填；可再手动删减。</div>
+      </div>
       <div class="form-check"><input class="form-check-input" type="checkbox" id="achStatus" ${(!c||c.status)?'checked':''}><label class="form-check-label">启用该渠道</label></div>
     `, [{t:'保存',c:'btn-primary',act:saveAiChannel}]);
   };
@@ -3032,6 +3043,42 @@
     if(res.code!==0){ toast(res.msg,'err'); return; }
     hideModal(); toast('已保存'); loadAihub();
   }
+
+  // 弹窗内「拉取模型」：新增(未保存)时只用弹窗里填的 url/key/type 探测，回填白名单；
+  // 已保存渠道且 key 留空时，后端用库里已存的 key。不写倍率表（with_sync=0），
+  // 真正保存随「保存」按钮一起完成，避免没点保存就污染数据。
+  App.aiChannelFetchModels=async function(btn){
+    const id=parseInt($('#achId').value,10)||0;
+    const url=$('#achUrl').value.trim();
+    const key=$('#achKey').value.trim();
+    const type=$('#achType').value;
+    if(!url){ toast('请先填写接口地址 Base URL','warn'); $('#achUrl').focus(); return; }
+    if(!key && !id){ toast('请先填写 API Key（保存前需用它鉴权拉取）','warn'); $('#achKey').focus(); return; }
+    const hint=$('#achModelsHint');
+    const oldHtml=btn?btn.innerHTML:'';
+    if(btn){ btn.disabled=true; btn.innerHTML='<span class="spinner-border spinner-border-sm me-1"></span>拉取中'; }
+    if(hint){ hint.textContent='正在连接上游拉取模型列表…'; hint.className='form-text text-muted'; }
+    try{
+      const res=await POST('/api/aichannel/test',{ id:id, base_url:url, api_key:key, type:type, with_sync:0 });
+      if(res.code!==0){
+        if(hint){ hint.textContent='拉取失败：'+res.msg; hint.className='form-text text-danger'; }
+        toast(res.msg,'err'); return;
+      }
+      const got=((res.data&&res.data.models)||[]).slice();
+      // 与白名单里已有的手工项合并去重，保留已填项不被吞掉
+      const cur=($('#achModels').value||'').split(/[,，\s]+/).map(function(s){return s.trim();}).filter(Boolean);
+      const merged=cur.slice();
+      got.forEach(function(m){ if(merged.indexOf(m)<0) merged.push(m); });
+      merged.sort();
+      $('#achModels').value=merged.join(',');
+      if(hint){ hint.textContent='已拉取 '+got.length+' 个模型并回填白名单（共 '+merged.length+' 项），可手动删减后保存。'; hint.className='form-text text-success'; }
+      toast('已拉取 '+got.length+' 个模型');
+    }catch(e){
+      if(hint){ hint.textContent='拉取异常：'+e.message; hint.className='form-text text-danger'; }
+    }finally{
+      if(btn){ btn.disabled=false; btn.innerHTML=oldHtml; }
+    }
+  };
 
   App.aiChannelTest=async function(id){
     const c=aihubState.channels.find(function(x){return x.id===id;}); if(!c) return;
@@ -3151,6 +3198,178 @@
     });
     if(res.code!==0){ toast(res.msg,'err'); return; }
     hideModal(); toast('已保存'); loadAihub();
+  }
+
+  // -------- 学生管理（管理员 + 教师）--------
+  let studentCache = { list: [], total: 0, page: 1 };
+
+  ROUTERS['admin-students'] = function(host){
+    const isAdmin = App.user && App.user.role === 'admin';
+    host.innerHTML = `<div class="card">
+      <div class="card-h"><i class="bi bi-people-fill text-primary"></i><span class="tt">学生管理</span>
+        <div class="flex-grow-1"></div>
+        <div class="btn-group btn-group-sm me-2" role="group">
+          <button type="button" class="btn btn-outline-primary" id="stuTabAll" onclick="KS.stuTab('all')">全部学生</button>
+          <button type="button" class="btn btn-outline-primary" id="stuTabPending" onclick="KS.stuTab('pending')">待审核</button>
+        </div>
+        ${isAdmin ? '<button class="btn btn-primary btn-sm" onclick="KS.studentForm(0)"><i class="bi bi-person-plus me-1"></i>新增学生</button>' : ''}
+      </div>
+      <div class="card-b">
+        <div class="d-flex gap-2 mb-2 flex-wrap align-items-center">
+          <input id="stuKeyword" class="form-control form-control-sm" style="width:200px" placeholder="搜索学号/姓名" onkeydown="if(event.key==='Enter')KS.loadStudents()">
+          <select id="stuClassFilter" class="form-select form-select-sm" style="width:auto" onchange="KS.loadStudents()">
+            <option value="0">全部班级</option>
+          </select>
+          <select id="stuStatusFilter" class="form-select form-select-sm" style="width:auto" onchange="KS.loadStudents()">
+            <option value="">全部状态</option>
+            <option value="1">正常</option>
+            <option value="2">待审核</option>
+            <option value="0">禁用</option>
+          </select>
+          <button class="btn btn-outline-secondary btn-sm" onclick="KS.loadStudents()"><i class="bi bi-search me-1"></i>查询</button>
+          <div class="flex-grow-1"></div>
+          <span class="small text-muted" id="stuTotalLabel">共 0 名学生</span>
+        </div>
+        <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr>
+          <th>学号</th><th>姓名</th><th>班级</th><th>性别</th><th>入学年</th><th>状态</th><th>来源</th><th>最后登录</th><th style="width:190px">操作</th>
+        </tr></thead><tbody id="stuTbody">
+          <tr><td colspan="9" class="text-center text-muted py-4">加载中…</td></tr>
+        </tbody></table></div>
+        <nav id="stuPagination"></nav>
+      </div>
+    </div>`;
+    loadClassSelect();
+    KS.loadStudents();
+  };
+
+  KS.stuTab = function(tab){
+    $('#stuTabAll').className = tab==='all' ? 'btn btn-primary btn-sm' : 'btn btn-outline-primary btn-sm';
+    $('#stuTabPending').className = tab==='pending' ? 'btn btn-primary btn-sm' : 'btn btn-outline-primary btn-sm';
+    if(tab==='pending'){ $('#stuStatusFilter').value='2'; } else { $('#stuStatusFilter').value=''; }
+    KS.loadStudents();
+  };
+
+  KS.loadStudents = async function(page){
+    page = page || 1;
+    const keyword = ($('#stuKeyword').value||'').trim();
+    const classId = ($('#stuClassFilter').value||'0');
+    const status = ($('#stuStatusFilter').value||'');
+    const q = 'page='+page;
+    if(keyword) q+= '&keyword='+encodeURIComponent(keyword);
+    if(classId && classId!='0') q+= '&class_id='+classId;
+    if(status!=='') q+= '&status='+status;
+    const res = await POST('/api/studentadmin/students?'+q);
+    if(res.code!==0){ toast(res.msg,'err'); return; }
+    studentCache = res.data;
+    const rows = res.data.list||[];
+    const tbody = $('#stuTbody');
+    $('#stuTotalLabel').textContent = '共 '+(res.data.total||0)+' 名学生';
+    if(!rows.length){
+      tbody.innerHTML='<tr><td colspan="9" class="text-center text-muted py-4">暂无学生记录</td></tr>';
+      $('#stuPagination').innerHTML='';
+      return;
+    }
+    const isAdmin = App.user && App.user.role === 'admin';
+    tbody.innerHTML = rows.map(function(s){
+      const statusMap = { '0':'<span class="badge bg-secondary">禁用</span>', '1':'<span class="badge bg-success">正常</span>', '2':'<span class="badge bg-warning">待审核</span>' };
+      const sourceMap = { 'import':'批量导入','register':'自助注册' };
+      const genderMap = { '0':'—','1':'男','2':'女' };
+      const ops = isAdmin ? (
+        '<button class="btn btn-sm btn-outline-primary me-1" onclick="KS.studentForm('+s.id+')"><i class="bi bi-pencil"></i></button>'
+        + (s.status==='2' ? '<button class="btn btn-sm btn-outline-success me-1" onclick="KS.approveStudent('+s.id+')">通过</button>' : '')
+        + '<button class="btn btn-sm btn-outline-'+ (s.status==='1'?'danger':'success') +' me-1" onclick="KS.studentToggle('+s.id+','+(s.status==='1'?0:1)+')">'
+        + (s.status==='1'?'禁用':'启用')+'</button>'
+        + '<button class="btn btn-sm btn-outline-danger" onclick="KS.studentDelete('+s.id+')"><i class="bi bi-trash"></i></button>'
+      ) : '<span class="text-muted small">只读</span>'; // 教师不可操作
+      return '<tr><td>'+esc(s.sno)+'</td><td>'+esc(s.name)+'</td><td>'+esc(s.class_name)+'</td>'
+        + '<td>'+genderMap[s.gender]+'</td><td>'+s.year+'</td>'
+        + '<td>'+statusMap[s.status]+'</td><td>'+sourceMap[s.source]+'</td>'
+        + '<td class="small">'+(s.last_login_at ? dateStr(s.last_login_at) : '—')+'</td>'
+        + '<td>'+ops+'</td></tr>';
+    }).join('');
+    // 分页
+    const totalPage = Math.ceil((res.data.total||0)/20);
+    if(totalPage>1){
+      let pgHtml='<ul class="pagination pagination-sm mb-0">';
+      for(let i=1;i<=totalPage;i++){
+        pgHtml+='<li class="page-item'+(i===page?' active':'')+'"><a class="page-link" href="#" onclick="event.preventDefault();KS.loadStudents('+i+')">'+i+'</a></li>';
+      }
+      pgHtml+='</ul>';
+      $('#stuPagination').innerHTML=pgHtml;
+    } else {
+      $('#stuPagination').innerHTML='';
+    }
+  };
+
+  KS.studentForm = async function(id){
+    const isAdmin = App.user && App.user.role === 'admin';
+    if(!isAdmin){ toast('仅管理员可操作','warn'); return; }
+    let s = null;
+    if(id>0){
+      s = studentCache.list.find(function(x){return x.id===id;});
+    }
+    // 获取班级列表
+    const clsRes = await POST('/api/admin/classes');
+    const classOpts = (clsRes.code===0 && clsRes.data) ? clsRes.data : [];
+    const classHtml = '<option value="0">无班级</option>'+classOpts.map(function(c){
+      return '<option value="'+c.id+'"'+(s&&s.class_id===c.id?' selected':'')+'>'+esc(c.name)+'</option>';
+    }).join('');
+    openModal(id?'编辑学生':'新增学生', `
+      <input type="hidden" id="stId" value="${id||0}">
+      <div class="row g-2 mb-2">
+        <div class="col-6"><label class="form-label">学号</label><input id="stSno" class="form-control" value="${s?esc(s.sno):''}" placeholder="如 2025001"></div>
+        <div class="col-6"><label class="form-label">姓名</label><input id="stName" class="form-control" value="${s?esc(s.name):''}"></div>
+      </div>
+      <div class="row g-2 mb-2">
+        <div class="col-4"><label class="form-label">性别</label><select id="stGender" class="form-select"><option value="0"${s&&s.gender===0?' selected':''}>未知</option><option value="1"${s&&s.gender===1?' selected':''}>男</option><option value="2"${s&&s.gender===2?' selected':''}>女</option></select></div>
+        <div class="col-4"><label class="form-label">入学年</label><input id="stYear" type="number" class="form-control" value="${s?s.year:new Date().getFullYear()}" placeholder="${new Date().getFullYear()}"></div>
+        <div class="col-4"><label class="form-label">电话</label><input id="stPhone" class="form-control" value="${s?esc(s.phone||''):''}"></div>
+      </div>
+      <div class="mb-2"><label class="form-label">班级</label><select id="stClass" class="form-select">${classHtml}</select></div>
+      <div class="mb-2"><label class="form-label">密码${id?'（留空不修改）':''}</label><input id="stPwd" type="password" class="form-control" placeholder="${id?'留空保持原密码':'默认与学号相同'}"></div>
+      <div class="form-check"><input class="form-check-input" type="checkbox" id="stStatus" ${!s||s.status==='1'?'checked':''}><label class="form-check-label">启用</label></div>
+    `, [{t:'保存',c:'btn-primary',act:saveStudent}]);
+  };
+
+  async function saveStudent(){
+    const id = parseInt($('#stId').value,10)||0;
+    const res=await POST('/api/studentadmin/studentSave',{
+      id, sno: $('#stSno').value.trim(), name: $('#stName').value.trim(),
+      gender: parseInt($('#stGender').value,10)||0, year: parseInt($('#stYear').value,10)||0,
+      phone: $('#stPhone').value.trim(), class_id: parseInt($('#stClass').value,10)||0,
+      password: $('#stPwd').value, status: $('#stStatus').checked?1:0
+    });
+    if(res.code!==0){ toast(res.msg,'err'); return; }
+    hideModal(); toast('已保存'); KS.loadStudents();
+  }
+
+  KS.studentToggle = async function(id,status){
+    const res=await POST('/api/studentadmin/studentToggle',{ id:id, status:status });
+    if(res.code!==0){ toast(res.msg,'err'); return; }
+    toast(status?'已启用':'已禁用'); KS.loadStudents();
+  };
+
+  KS.studentDelete = async function(id){
+    if(!confirm('确认删除该学生？相关的出勤和成绩记录不会被删除。')) return;
+    const res=await POST('/api/studentadmin/studentDelete',{ id:id });
+    if(res.code!==0){ toast(res.msg,'err'); return; }
+    toast('已删除'); KS.loadStudents();
+  };
+
+  KS.approveStudent = async function(id){
+    if(!confirm('审核通过该学生的注册申请？')) return;
+    const res=await POST('/api/studentadmin/approveStudent',{ id:id });
+    if(res.code!==0){ toast(res.msg,'err'); return; }
+    toast('已审核通过'); KS.loadStudents();
+  };
+
+  async function loadClassSelect(){
+    const res = await POST('/api/admin/classes');
+    if(res.code!==0) return;
+    const sel = $('#stuClassFilter');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="0">全部班级</option>'
+      + (res.data||[]).map(function(c){return '<option value="'+c.id+'"'+(c.id==parseInt(cur)?' selected':'')+'>'+esc(c.name)+'</option>';}).join('');
   }
 
   // -------- 基础配置（院系/课程/学期/系统参数） --------

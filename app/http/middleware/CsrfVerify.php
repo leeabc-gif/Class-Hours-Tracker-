@@ -21,6 +21,8 @@ class CsrfVerify
         'api/auth/login',
         'api/auth/register',
         'api/auth/csrfToken',
+        'api/studentauth/login',
+        'api/studentauth/register',
         'install/',
     ];
 

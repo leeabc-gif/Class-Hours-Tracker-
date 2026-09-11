@@ -584,6 +584,7 @@ class Admin extends Base
                 'department_id' => (int)$c->department_id,
                 'department'    => $c->departmentName(),
                 'year'          => (int)$c->year,
+                'join_code'     => (string)$c->getData('join_code'),
                 'status'        => (int)$c->status,
                 'sort'          => (int)$c->sort,
                 'remark'        => $c->getData('remark'),
@@ -600,6 +601,7 @@ class Admin extends Base
         $name         = trim(isset($data['name']) ? $data['name'] : '');
         $departmentId = intval(isset($data['department_id']) ? $data['department_id'] : 0);
         $year         = intval(isset($data['year']) ? $data['year'] : 0);
+        $joinCode     = trim(isset($data['join_code']) ? $data['join_code'] : '');
         $status       = isset($data['status']) ? (int)$data['status'] : 1;
         $sort         = intval(isset($data['sort']) ? $data['sort'] : 0);
         $remark       = trim(isset($data['remark']) ? $data['remark'] : '');
@@ -609,6 +611,10 @@ class Admin extends Base
         }
         if (mb_strlen($name) > 32) {
             return $this->fail('班级名称不能超过 32 个字符');
+        }
+        // 口令：留空=不开放自助注册；非空限 4-16 位字母数字
+        if ($joinCode !== '' && !preg_match('/^[A-Za-z0-9]{4,16}$/', $joinCode)) {
+            return $this->fail('班级注册口令须为 4-16 位字母或数字，留空则不开放');
         }
         if ($departmentId > 0 && !Department::get($departmentId)) {
             return $this->fail('所选院系不存在');
@@ -624,6 +630,7 @@ class Admin extends Base
             $c->name          = $name;
             $c->department_id = $departmentId;
             $c->year          = $year;
+            $c->join_code     = $joinCode;
             $c->status        = $status;
             $c->sort          = $sort;
             $c->remark        = $remark;
@@ -634,6 +641,7 @@ class Admin extends Base
                 'name'          => $name,
                 'department_id' => $departmentId,
                 'year'          => $year,
+                'join_code'     => $joinCode,
                 'status'        => $status,
                 'sort'          => $sort,
                 'remark'        => $remark,

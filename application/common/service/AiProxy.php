@@ -5,6 +5,7 @@ use app\common\model\AiChannel;
 use app\common\model\AiModel;
 use app\common\model\AiUsageLog;
 use app\common\model\Setting;
+use app\common\service\StudentQuotaService;
 
 /**
  * AI 中转代理（对标 New API / One API 的转发核心）
@@ -37,8 +38,13 @@ class AiProxy
      */
     public static function chat(array $opt)
     {
+        $ownerType = in_array((string)(isset($opt['owner_type']) ? $opt['owner_type'] : 'teacher'), ['teacher','student'], true)
+            ? (string)$opt['owner_type'] : 'teacher';
+        $isStudent = ($ownerType === 'student');
         $teacherId = intval(isset($opt['teacher_id']) ? $opt['teacher_id'] : 0);
-        if ($teacherId <= 0) {
+        $studentId = intval(isset($opt['student_id']) ? $opt['student_id'] : 0);
+        $ownerId   = $isStudent ? $studentId : $teacherId;
+        if ($ownerId <= 0) {
             return self::fail('缺少用户身份，无法计费');
         }
 
@@ -47,19 +53,24 @@ class AiProxy
             return self::fail('消息内容为空');
         }
 
-        $source      = in_array((string)(isset($opt['source']) ? $opt['source'] : 'chat'), ['chat', 'playground', 'api'], true)
+        $source      = in_array((string)(isset($opt['source']) ? $opt['source'] : 'chat'), ['chat', 'playground', 'api', 'student'], true)
             ? (string)$opt['source'] : 'chat';
         $tokenId     = intval(isset($opt['token_id']) ? $opt['token_id'] : 0);
         $temperature = isset($opt['temperature']) ? floatval($opt['temperature']) : 0.3;
         $ip          = (string)(isset($opt['ip']) ? $opt['ip'] : '');
 
         // ---- 1) 额度粗检 ----
-        // 站内「AI 助手」在教师尚未被分配额度时不阻断（避免升级后 AI 直接不可用）；
-        // AI 操练场与外部 API 一律严格校验。
-        $strict = ($source !== 'chat');
-        $pre = QuotaService::preCheck($teacherId, $strict);
-        if (!$pre['ok']) {
-            return array_merge(self::fail($pre['msg']), ['quota' => QuotaService::summary($teacherId)]);
+        if ($isStudent) {
+            $pre = StudentQuotaService::preCheck($studentId);
+            if (!$pre['ok']) {
+                return array_merge(self::fail($pre['msg']), ['quota' => StudentQuotaService::summary($studentId)]);
+            }
+        } else {
+            $strict = ($source !== 'chat');
+            $pre = QuotaService::preCheck($teacherId, $strict);
+            if (!$pre['ok']) {
+                return array_merge(self::fail($pre['msg']), ['quota' => QuotaService::summary($teacherId)]);
+            }
         }
 
         // ---- 2) 决定模型 ----
@@ -99,10 +110,16 @@ class AiProxy
                 $points           = AiModel::cost($model, $promptTokens, $completionTokens);
 
                 // 结算（原子扣减）
-                $settle = QuotaService::settle($teacherId, $points);
+                if ($isStudent) {
+                    $settle = StudentQuotaService::settle($studentId, $points);
+                } else {
+                    $settle = QuotaService::settle($teacherId, $points);
+                }
 
-                AiUsageLog::record([
+                $logData = [
                     'teacher_id'        => $teacherId,
+                    'owner_type'        => $ownerType,
+                    'student_id'        => $studentId,
                     'token_id'          => $tokenId,
                     'channel_id'        => (int)$ch->id,
                     'model'             => $model,
@@ -113,7 +130,10 @@ class AiProxy
                     'status'            => 1,
                     'source'            => $source,
                     'ip'                => $ip,
-                ]);
+                ];
+                AiUsageLog::record($logData);
+
+                $quotaSummary = $isStudent ? StudentQuotaService::summary($studentId) : QuotaService::summary($teacherId);
 
                 return [
                     'ok'         => true,
@@ -125,7 +145,7 @@ class AiProxy
                     'channel_id' => (int)$ch->id,
                     'latency_ms' => $res['latency_ms'],
                     'settled'    => $settle['ok'] ? 1 : 0,
-                    'quota'      => QuotaService::summary($teacherId),
+                    'quota'      => $quotaSummary,
                 ];
             }
 
@@ -136,6 +156,8 @@ class AiProxy
         // ---- 6) 全部失败 ----
         AiUsageLog::record([
             'teacher_id' => $teacherId,
+            'owner_type' => $ownerType,
+            'student_id' => $studentId,
             'token_id'   => $tokenId,
             'channel_id' => 0,
             'model'      => $model,
@@ -145,7 +167,8 @@ class AiProxy
             'ip'         => $ip,
         ]);
 
-        return array_merge(self::fail('AI 调用失败：' . $lastErr), ['quota' => QuotaService::summary($teacherId)]);
+        $errQuota = $isStudent ? StudentQuotaService::summary($studentId) : QuotaService::summary($teacherId);
+        return array_merge(self::fail('AI 调用失败：' . $lastErr), ['quota' => $errQuota]);
     }
 
     /**
@@ -268,22 +291,35 @@ class AiProxy
             return self::fail('流式回调不可调用');
         }
 
+        $ownerType = in_array((string)(isset($opt['owner_type']) ? $opt['owner_type'] : 'teacher'), ['teacher','student'], true)
+            ? (string)$opt['owner_type'] : 'teacher';
+        $isStudent = ($ownerType === 'student');
         $teacherId = intval(isset($opt['teacher_id']) ? $opt['teacher_id'] : 0);
-        if ($teacherId <= 0) return self::fail('缺少用户身份，无法计费');
+        $studentId = intval(isset($opt['student_id']) ? $opt['student_id'] : 0);
+        $ownerId   = $isStudent ? $studentId : $teacherId;
+        if ($ownerId <= 0) return self::fail('缺少用户身份，无法计费');
 
         $messages = isset($opt['messages']) && is_array($opt['messages']) ? $opt['messages'] : [];
         if (!$messages) return self::fail('消息内容为空');
 
         $source = isset($opt['source']) ? (string)$opt['source'] : 'chat';
-        if (!in_array($source, ['chat', 'playground', 'api'], true)) $source = 'chat';
+        if (!in_array($source, ['chat', 'playground', 'api', 'student'], true)) $source = 'chat';
         $tokenId     = intval(isset($opt['token_id']) ? $opt['token_id'] : 0);
         $temperature = isset($opt['temperature']) ? floatval($opt['temperature']) : 0.3;
         $ip          = (string)(isset($opt['ip']) ? $opt['ip'] : '');
 
-        $strict = ($source !== 'chat');
-        $pre = QuotaService::preCheck($teacherId, $strict);
-        if (!$pre['ok']) {
-            return array_merge(self::fail($pre['msg']), ['quota' => QuotaService::summary($teacherId)]);
+        // 额度粗检
+        if ($isStudent) {
+            $pre = StudentQuotaService::preCheck($studentId);
+            if (!$pre['ok']) {
+                return array_merge(self::fail($pre['msg']), ['quota' => StudentQuotaService::summary($studentId)]);
+            }
+        } else {
+            $strict = ($source !== 'chat');
+            $pre = QuotaService::preCheck($teacherId, $strict);
+            if (!$pre['ok']) {
+                return array_merge(self::fail($pre['msg']), ['quota' => QuotaService::summary($teacherId)]);
+            }
         }
 
         $model = trim((string)(isset($opt['model']) ? $opt['model'] : ''));
@@ -319,9 +355,16 @@ class AiProxy
                 $completionTokens = intval($res['usage']['completion_tokens']);
                 $points           = AiModel::cost($model, $promptTokens, $completionTokens);
 
-                $settle = QuotaService::settle($teacherId, $points);
-                AiUsageLog::record([
+                if ($isStudent) {
+                    $settle = StudentQuotaService::settle($studentId, $points);
+                } else {
+                    $settle = QuotaService::settle($teacherId, $points);
+                }
+
+                $logData = [
                     'teacher_id'        => $teacherId,
+                    'owner_type'        => $ownerType,
+                    'student_id'        => $studentId,
                     'token_id'          => $tokenId,
                     'channel_id'        => (int)$ch->id,
                     'model'             => $model,
@@ -332,7 +375,10 @@ class AiProxy
                     'status'            => 1,
                     'source'            => $source,
                     'ip'                => $ip,
-                ]);
+                ];
+                AiUsageLog::record($logData);
+
+                $quotaSummary = $isStudent ? StudentQuotaService::summary($studentId) : QuotaService::summary($teacherId);
 
                 return [
                     'ok'         => true,
@@ -344,15 +390,17 @@ class AiProxy
                     'channel_id' => (int)$ch->id,
                     'latency_ms' => $res['latency_ms'],
                     'settled'    => $settle['ok'] ? 1 : 0,
-                    'quota'      => QuotaService::summary($teacherId),
+                    'quota'      => $quotaSummary,
                 ];
             }
             $lastErr = $res['msg'];
             $ch->markFail($res['msg']);
         }
 
-        AiUsageLog::record([
+        $logData = [
             'teacher_id' => $teacherId,
+            'owner_type' => $ownerType,
+            'student_id' => $studentId,
             'token_id'   => $tokenId,
             'channel_id' => 0,
             'model'      => $model,
@@ -360,9 +408,11 @@ class AiProxy
             'error_msg'  => $lastErr,
             'source'     => $source,
             'ip'         => $ip,
-        ]);
+        ];
+        AiUsageLog::record($logData);
 
-        return array_merge(self::fail('AI 调用失败：' . $lastErr), ['quota' => QuotaService::summary($teacherId)]);
+        $errQuota = $isStudent ? StudentQuotaService::summary($studentId) : QuotaService::summary($teacherId);
+        return array_merge(self::fail('AI 调用失败：' . $lastErr), ['quota' => $errQuota]);
     }
 
     /** 单一渠道流式转发（curl WRITEFUNCTION + SSE 行解析） */
