@@ -69,9 +69,17 @@ v1.1.4 是 **首个携带建表 DDL 的正式版**：补齐 AI 中转平台 5 �
 - git tag：`v1.1.4`
 - 更新包：`release/keshi-1.1.4.zip`（仅作本地/平台上传用，不入库）
 
-## 已知限制 / 待办
+## 发布状态（2026-09-11 当日更新）
 
-- **实际 Release + 资产上传需 GitHub PAT / CNB Token**：本会话运行环境未提供 token，
-  故代码与 tag 已推送，但两个平台的 Release 与资产（zip + manifest）**仍需创建/上传**——
-  可由用户手动在平台界面操作，或提供 token 后由工具完成。
-- `release/` 目录被 `.gitignore` 忽略，zip 不入库；`manifest.json` / `manifest-github.json` 已 `git add -f` 入库。
+- **CNB：已发布并线上校验全绿。** Release id `2098289766013145088`，tag `v1.1.4` → 提交 `c4a779a`；
+  两个资产 `manifest.json`（CNB 签名版）+ `keshi-1.1.4.zip` 均 PUT/verify 200。
+  线上实测：latest 解析→v1.1.4、manifest 合法、zip sha256 一致、RSA 验签通过。
+  **站点把「在线更新源」切到 CNB 即可收到本版。** 操作见 `UPGRADE_v1.1.4_CNB操作指引.md`。
+- **GitHub：代码 + tag v1.1.4 已通过 SSH 推送**；但 Release + 资产需 GitHub PAT，本次按用户决定
+  **暂不发 GitHub**（站点改用 CNB 源）。如日后补发：`GH_TOKEN=<pat> python _env/publish_github_114.py`。
+- 升级自引导安全链已验证：v1.1.3 垫脚石 `from_version=1.0.0`（任何老站可升）；v1.1.4 `from_version=1.1.3`
+  （`assertEnvCompatible` 从 1.0.0 起就存在于所有已发布版本，旧更新器也会强制拦截跳级）。
+
+### 升级链结论
+- 当前 **≥1.1.3** → 切 CNB 源后直接升到 v1.1.4。
+- 当前 **1.0.x / 1.1.0~1.1.2** → 先升 v1.1.3 垫脚石（旧更新器会被 `from_version` 守卫拦下并提示），再升 v1.1.4。
