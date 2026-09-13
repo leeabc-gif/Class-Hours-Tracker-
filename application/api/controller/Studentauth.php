@@ -2,7 +2,7 @@
 namespace app\api\controller;
 
 use app\common\model\Student;
-use app\common\service\StudentAuth;
+use app\common\service\StudentAuth as StudentAuthService;
 use app\common\service\Boot;
 use think\facade\Session;
 
@@ -24,7 +24,7 @@ class Studentauth extends StudentBase
         $sno      = trim(isset($data['sno']) ? $data['sno'] : '');
         $password = isset($data['password']) ? $data['password'] : '';
 
-        $res = StudentAuth::attempt($sno, $password);
+        $res = StudentAuthService::attempt($sno, $password);
         if (!$res['ok']) {
             return $this->fail($res['msg']);
         }
@@ -40,7 +40,7 @@ class Studentauth extends StudentBase
      */
     public function logout()
     {
-        StudentAuth::logout();
+        StudentAuthService::logout();
         return $this->ok(null, '已退出登录');
     }
 
@@ -100,15 +100,26 @@ class Studentauth extends StudentBase
             $classId = (int)$class->id;
         }
 
-        $new = Student::create([
-            'sno'      => $sno,
-            'password' => Student::hashPassword($password),
-            'name'     => $name,
-            'class_id' => $classId,
-            'year'     => (int)date('Y'),
-            'status'   => Student::STATUS_PENDING,
-            'source'   => 'register',
-        ]);
+        try {
+            Student::create([
+                'sno'      => $sno,
+                'password' => Student::hashPassword($password),
+                'name'     => $name,
+                'class_id' => $classId,
+                'year'     => (int)date('Y'),
+                'status'   => Student::STATUS_PENDING,
+                'source'   => 'register',
+            ]);
+        } catch (\Throwable $e) {
+            // 唯一索引是并发注册的最终闸门；不要把重复学号暴露成 500。
+            $message = strtolower($e->getMessage());
+            if (strpos($message, 'duplicate') !== false ||
+                strpos($message, '1062') !== false ||
+                strpos($message, 'uk_sno') !== false) {
+                return $this->fail('该学号已被注册');
+            }
+            throw $e;
+        }
 
         return $this->ok(['sno' => $sno, 'status' => Student::STATUS_PENDING],
             '注册成功，请等待管理员审核后登录');

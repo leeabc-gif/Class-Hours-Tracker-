@@ -7,6 +7,9 @@ use app\common\model\SchoolClass;
 use app\common\model\Lesson;
 use app\common\model\StudentAttendance;
 use app\common\model\StudentScore;
+use app\common\model\StudentAiConversation;
+use app\common\model\StudentAiMessage;
+use app\common\service\AiProxy;
 
 /**
  * 学生管理（管理员 + 教师）
@@ -78,6 +81,158 @@ class Studentadmin extends Base
             'total' => $total,
             'page'  => $page,
         ]);
+    }
+
+    /**
+     * 学生学情摘要（教师仅限自己授课班级，管理员不限）
+     * GET /api/studentadmin/learningProfile?student_id=1
+     */
+    public function learningProfile()
+    {
+        $studentId = intval($this->request->param('student_id', 0));
+        if (!$studentId) return $this->fail('请指定学生');
+
+        $student = Student::get($studentId);
+        if (!$student) return $this->fail('学生不存在');
+        if (!$this->user->isAdmin() &&
+            !in_array((int)$student->class_id, $this->teacherClassIds(), true)) {
+            return $this->fail('无权查看该学生学情', 403);
+        }
+
+        $attendance = StudentAttendance::where('student_id', $studentId)->select();
+        $att = ['total' => 0, 'present' => 0, 'absent' => 0, 'leave' => 0, 'late' => 0, 'early' => 0];
+        foreach ($attendance as $row) {
+            $status = (string)$row->status;
+            $att['total']++;
+            if (isset($att[$status])) $att[$status]++;
+        }
+        $att['rate'] = $att['total'] > 0 ? round($att['present'] / $att['total'], 4) : null;
+
+        $scoreRows = StudentScore::where('student_id', $studentId)
+            ->order('id desc')->limit(20)->select();
+        $scoreSum = 0.0;
+        $scoreCount = 0;
+        $scores = [];
+        foreach ($scoreRows as $row) {
+            $score = $row->score;
+            if ($score !== null && $score !== '') {
+                $scoreSum += (float)$score;
+                $scoreCount++;
+            }
+            $scores[] = [
+                'course_name' => (string)$row->course_name,
+                'title' => (string)$row->title,
+                'score' => $score === null ? null : (float)$score,
+                'grade' => (string)$row->grade,
+                'comment' => (string)$row->comment,
+                'created_at' => (int)$row->getData('created_at'),
+            ];
+        }
+
+        $conversationCount = (int)StudentAiConversation::where('student_id', $studentId)->count();
+        $messageCount = (int)StudentAiMessage::where('student_id', $studentId)->count();
+        $questions = [];
+        foreach (StudentAiMessage::where('student_id', $studentId)->where('role', 'user')
+            ->order('id desc')->limit(10)->select() as $message) {
+            $questions[] = [
+                'content' => mb_substr((string)$message->content, 0, 200),
+                'created_at' => (int)$message->getData('created_at'),
+            ];
+        }
+
+        return $this->ok([
+            'student' => $student->toSafeArray(),
+            'attendance' => $att,
+            'scores' => [
+                'count' => count($scores),
+                'average' => $scoreCount > 0 ? round($scoreSum / $scoreCount, 2) : null,
+                'latest' => $scores,
+            ],
+            'ai' => [
+                'conversation_count' => $conversationCount,
+                'message_count' => $messageCount,
+                'recent_questions' => $questions,
+            ],
+        ]);
+    }
+
+    /**
+     * 生成学生学情建议（教师仅限自己授课班级，管理员不限）
+     * POST /api/studentadmin/analyzeLearning
+     * {"student_id":1}
+     */
+    public function analyzeLearning()
+    {
+        $data = $this->jsonInput();
+        $studentId = intval(isset($data['student_id']) ? $data['student_id'] : 0);
+        if (!$studentId) return $this->fail('请指定学生');
+
+        $student = Student::get($studentId);
+        if (!$student) return $this->fail('学生不存在');
+        if (!$this->user->isAdmin() &&
+            !in_array((int)$student->class_id, $this->teacherClassIds(), true)) {
+            return $this->fail('无权分析该学生学情', 403);
+        }
+
+        $attendance = StudentAttendance::where('student_id', $studentId)->select();
+        $att = ['total' => 0, 'present' => 0, 'absent' => 0, 'leave' => 0, 'late' => 0, 'early' => 0];
+        foreach ($attendance as $row) {
+            $status = (string)$row->status;
+            $att['total']++;
+            if (isset($att[$status])) $att[$status]++;
+        }
+        $att['rate'] = $att['total'] > 0 ? round($att['present'] / $att['total'], 4) : null;
+
+        $scores = StudentScore::where('student_id', $studentId)->order('id desc')->limit(20)->select();
+        $scoreText = [];
+        $sum = 0.0;
+        $count = 0;
+        foreach ($scores as $row) {
+            $value = $row->score;
+            if ($value !== null && $value !== '') {
+                $sum += (float)$value;
+                $count++;
+            }
+            $scoreText[] = [
+                'course' => (string)$row->course_name,
+                'item' => (string)$row->title,
+                'score' => $value === null ? null : (float)$value,
+                'grade' => (string)$row->grade,
+            ];
+        }
+
+        $questions = [];
+        foreach (StudentAiMessage::where('student_id', $studentId)->where('role', 'user')
+            ->order('id desc')->limit(10)->select() as $message) {
+            $questions[] = mb_substr((string)$message->content, 0, 200);
+        }
+        $context = '请作为中职教师的教学诊断助手，基于以下脱敏聚合数据给出简洁、可执行的学生学情建议。'
+            . '输出：1.主要表现 2.可能困难 3.一周内干预建议 4.需要继续观察的指标。'
+            . '不要猜测未提供的事实，不要输出隐私信息。学生姓名：' . mb_substr((string)$student->getData('name'), 0, 32)
+            . '；出勤：' . json_encode($att, JSON_UNESCAPED_UNICODE)
+            . '；成绩：' . json_encode(['average' => $count > 0 ? round($sum / $count, 2) : null, 'latest' => $scoreText], JSON_UNESCAPED_UNICODE)
+            . '；最近提问摘要：' . json_encode($questions, JSON_UNESCAPED_UNICODE);
+
+        try {
+            $result = AiProxy::chat([
+                'teacher_id' => (int)$this->user->id,
+                'messages' => [
+                    ['role' => 'system', 'content' => '你是严谨、克制的教学诊断助手。'],
+                    ['role' => 'user', 'content' => $context],
+                ],
+                'source' => 'chat',
+                'temperature' => 0.2,
+                'ip' => $this->request->ip(),
+            ]);
+        } catch (\Throwable $e) {
+            return $this->fail('学情分析失败，请稍后重试');
+        }
+        if (empty($result['ok'])) return $this->fail($result['msg'] ?: '学情分析失败');
+        return $this->ok([
+            'content' => (string)$result['content'],
+            'model' => isset($result['model']) ? (string)$result['model'] : '',
+            'points' => isset($result['points']) ? (float)$result['points'] : 0,
+        ], '分析完成');
     }
 
     /**
@@ -230,6 +385,81 @@ class Studentadmin extends Base
     }
 
     // ============================================================
+    // 批量导入
+    // ============================================================
+
+    /**
+     * 批量导入学生
+     * POST /api/studentadmin/importStudents
+     * {"students":[{"sno":"...","name":"...","gender":1,"class_id":0,"year":2026,"phone":""}]}
+     * 返回实际导入数 + 失败明细
+     */
+    public function importStudents()
+    {
+        if (!$this->user->isAdmin()) return $this->fail('仅限管理员', 403);
+
+        $data = $this->jsonInput();
+        $rows = isset($data['students']) && is_array($data['students']) ? $data['students'] : [];
+        if (empty($rows)) return $this->fail('请提供学生数据');
+
+        $imported = 0;
+        $errors   = [];
+        $year     = (int)date('Y');
+        $now      = time();
+
+        foreach ($rows as $idx => $item) {
+            $sno      = trim(isset($item['sno']) ? $item['sno'] : '');
+            $name     = trim(isset($item['name']) ? $item['name'] : '');
+            $gender   = intval(isset($item['gender']) ? $item['gender'] : 0);
+            $classId  = intval(isset($item['class_id']) ? $item['class_id'] : 0);
+            $phone    = trim(isset($item['phone']) ? $item['phone'] : '');
+            $syear    = intval(isset($item['year']) ? $item['year'] : 0);
+
+            $line = $idx + 1;
+
+            // 校验
+            if ($sno === '' || !preg_match('/^[A-Za-z0-9_]{4,32}$/', $sno)) {
+                $errors[] = "第{$line}行：学号格式无效（{$sno}）";
+                continue;
+            }
+            if (mb_strlen($name) < 2 || mb_strlen($name) > 32) {
+                $errors[] = "第{$line}行：姓名长度无效（{$name}）";
+                continue;
+            }
+            if ($classId > 0 && !SchoolClass::get($classId)) {
+                $errors[] = "第{$line}行：班级ID {$classId} 不存在";
+                continue;
+            }
+            $exist = Student::where('sno', $sno)->find();
+            if ($exist) {
+                $errors[] = "第{$line}行：学号 {$sno} 已存在（学生ID: {$exist->id}）";
+                continue;
+            }
+
+            Student::create([
+                'sno'       => $sno,
+                'password'  => Student::hashPassword($sno),
+                'name'      => $name,
+                'gender'    => $gender,
+                'class_id'  => $classId,
+                'phone'     => $phone,
+                'year'      => $syear > 0 ? $syear : $year,
+                'status'    => Student::STATUS_ACTIVE,
+                'source'    => 'import',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            $imported++;
+        }
+
+        $this->log('create', 'student', 0, "批量导入：成功 {$imported} 条" . ($errors ? "，失败 " . count($errors) . " 条" : ''));
+        return $this->ok([
+            'imported' => $imported,
+            'errors'   => $errors,
+        ], "导入完成：成功 {$imported} 条" . ($errors ? "，失败 " . count($errors) . " 条" : ''));
+    }
+
+    // ============================================================
     // 出勤管理（教师录入）
     // ============================================================
 
@@ -247,6 +477,10 @@ class Studentadmin extends Base
         if (!$lessonId) return $this->fail('请指定课时');
         $lesson = Lesson::get($lessonId);
         if (!$lesson) return $this->fail('课时不存在');
+        if ((int)$lesson->deleted_at !== 0) return $this->fail('课时已删除');
+        if (!$this->user->isAdmin() && (int)$lesson->teacher_id !== (int)$this->user->id) {
+            return $this->fail('无权操作该课时', 403);
+        }
 
         $inserted = 0;
         $now      = time();
@@ -255,6 +489,11 @@ class Studentadmin extends Base
             $status = (string)(isset($item['status']) ? $item['status'] : 'present');
             $note   = trim(isset($item['note']) ? $item['note'] : '');
             if (!$sid) continue;
+            $student = Student::get($sid);
+            if (!$student) continue;
+            if (!$this->user->isAdmin() && !$this->lessonContainsStudentClass($lesson, $student)) {
+                continue;
+            }
 
             $validStatuses = ['present','absent','leave','late','early'];
             if (!in_array($status, $validStatuses, true)) $status = 'present';
@@ -310,9 +549,22 @@ class Studentadmin extends Base
 
         if (!$studentId) return $this->fail('请指定学生');
         if ($title === '') return $this->fail('请填写考核项名称');
+        if (mb_strlen($courseName) > 64) return $this->fail('课程名称不能超过 64 个字符');
+        if (mb_strlen($title) > 100) return $this->fail('考核项名称不能超过 100 个字符');
+        if (mb_strlen($grade) > 16) return $this->fail('等级不能超过 16 个字符');
+        if (mb_strlen($comment) > 1000) return $this->fail('评语不能超过 1000 个字符');
 
         $s = Student::get($studentId);
         if (!$s) return $this->fail('学生不存在');
+        if (!$this->user->isAdmin() && !in_array((int)$s->class_id, $this->teacherClassIds(), true)) {
+            return $this->fail('无权操作该学生', 403);
+        }
+        if ($score !== null && !is_finite($score)) {
+            return $this->fail('分数格式无效');
+        }
+        if ($score !== null && ($score < 0 || $score > 100)) {
+            return $this->fail('分数必须在 0-100 之间');
+        }
 
         $row = StudentScore::create([
             'student_id'  => $studentId,
@@ -336,6 +588,20 @@ class Studentadmin extends Base
     // 辅助方法
     // ============================================================
 
+    /** 判断学生所属班级是否出现在该课时的班级快照中。 */
+    private function lessonContainsStudentClass($lesson, $student)
+    {
+        $classId = (int)$student->class_id;
+        if ($classId <= 0) return false;
+        $class = SchoolClass::get($classId);
+        if (!$class) return false;
+        $className = trim((string)$class->getData('name'));
+        if ($className === '') return false;
+        $rawClasses = preg_split('/[,，;；\r\n]+/u', (string)$lesson->classes);
+        $lessonClasses = array_filter(array_map('trim', $rawClasses));
+        return in_array($className, $lessonClasses, true);
+    }
+
     /** 教师授课班级 ID 列表 */
     private function teacherClassIds()
     {
@@ -346,7 +612,7 @@ class Studentadmin extends Base
             ->select();
         $names = [];
         foreach ($lessons as $l) {
-            $parts = explode(',', (string)$l->classes);
+            $parts = preg_split('/[,，;；\r\n]+/u', (string)$l->classes);
             foreach ($parts as $p) {
                 $p = trim($p);
                 if ($p !== '') $names[$p] = true;

@@ -1,19 +1,19 @@
 {
-    "latest_version": "1.1.4",
+    "latest_version": "1.2.0",
     "min_php": "7.4",
-    "published_at": "2026-09-11T04:22:07+00:00",
-    "changelog": "### 新增\n- **AI 中转网关真流式（SSE）**：`/v1/chat/completions` 与 `/playground/stream` 现在逐 chunk 流式返回，\n  首包先发 `role`、末包带 `usage{points,channel_id}` 与 `[DONE]`，前端 Playground 实时累加渲染。\n- **多厂商通道 + 自动故障转移**：按 `priority` 权重选启用渠道，单次请求最多尝试 `MAX_TRY_CHANNELS=3`\n  个渠道，坏渠道（超时/5xx）通过 `__SWITCH__<id>|<name>` 透传信号自动切下一渠道，全程只记 1 条用量日志。\n- **按厂商拉取模型列表**：`AiConfig::fetchModels($url,$key,$type)` 按 type 分发 ——\n  Gemini 走 `/v1beta/models?key=`；OpenAI / Claude / 通义 / DeepSeek / 自定义 走 OpenAI 兼容 `GET /models`\n  （Anthropic 官方代理多数暴露 `/v1/models`，故 Claude 归 OpenAI 兼容分支）。\n\n### 修复\n- **额度「扣了钱没扣额度」**：旧定义余额/限额为 `DECIMAL(14,2)`，按实际 token 倍率计费产生 sub-cent 点数\n  （如 0.0036 点）被四舍五入吞掉（`1000 - 0.0036 → 1000.00`）。全部金额列提升到 `DECIMAL(16,6)`，\n  计费恢复精确（`bill_delta=0.0036` 正确扣减）。\n\n### 数据库（在线升级自动执行）\n- **补齐 7 张表**：AI 中转 5 张（`ks_ai_channel` / `ks_ai_model` / `ks_ai_token` / `ks_ai_quota` / `ks_ai_usage_log`）\n  + 通知公告 2 张（`ks_notice` / `ks_notice_read`）。v1.1.0~v1.1.2 因升级死锁一直没建，v1.1.3 垫脚石已打破死锁，\n  本版起 `upgrade.sql` 正式携带这些建表语句（全部 `CREATE TABLE IF NOT EXISTS`，幂等安全）。\n- 升级包同时携带上述精度提升 ALTER，已装站点升级后自动生效，无需手工执行迁移。\n\n### 说明\n- 本版是首个「含 DDL」的正式版本，之所以现在才安全：v1.1.3 已把修复后的 `UpdateService` 部署到所有站点，\n  它能正确处理「含 DDL 的 upgrade.sql」（DDL 隐式提交不再报错）。**从 1.0.x 升级请先升 v1.1.3 垫脚石版。**\n\n---",
+    "published_at": "2026-09-13T06:08:37+00:00",
+    "changelog": "### 新增\n- **学生档案（`ks_student`）**：学号登录账号，独立于教师账号体系。字段含学号、密码(哈希)、姓名、性别、\n  班级、入学年份、手机号、头像、状态（`2=待审核 / 1=正常 / 0=禁用`）、来源（`import=批量导入 / register=自助注册`）。\n- **学生管理（后台）**：学生列表（搜索/筛选/分页）、批量导入、新建/编辑、启停用、待审核名单一键通过。\n  管理员可见全部学生；教师仅可见本班学生。\n- **学生门户（独立移动端 `student.html`）**：手机浏览器直接打开，底部 Tab 导航，含登录/注册/首页/\n  出勤/成绩/AI 答疑六页，会话恢复、多设备共用。\n- **班级自助注册口令（`ks_class.join_code`）**：教师可在班级管理中设置 4-16 位字母数字口令；\n  学生凭口令自助注册进班（注册后为「待审核」状态，管理员/教师通过后激活）。\n- **学生出勤（`ks_student_attendance`）**：按「课时 × 学生」唯一记录出勤状态，教师端可为学生补记/改记。\n- **学生成绩与评价（`ks_student_score`）**：登记分数（可空）+ 等级 + 教师评语，按学生可查多条历史。\n- **学生 AI 答疑（权限受控）**：独立学生 AI 额度表（`ks_student_ai_quota`），问答走现有 AI 中转网关\n  （`AiProxy` 支持 `owner_type=student`），记录会话（`ks_student_ai_conversation`）与消息\n  （`ks_student_ai_message`，含标记字段供审计），SSE 流式返回。教师侧也可看学生学情画像数据源。\n- **AI 用量审计扩展**：`ks_ai_usage_log` 新增 `owner_type`（teacher/student）与 `student_id`，\n  教师与学生调用进同一张计费/审计表；`source` 枚举增 `student`。\n\n### 数据库（在线升级自动执行，幂等）\n- 新增 6 张学生相关表（全部 `CREATE TABLE IF NOT EXISTS`）；升级包自包含——\n  从 v1.1.3 直接跳升也能先补齐 v1.1.4 的 7 张 AI/公告表（已装 v1.1.4 的站点自动跳过）。\n- `ks_class` 增 `join_code` 列（幂等列增，`INFORMATION_SCHEMA` 检测 + `PREPARE/EXECUTE`）。\n\n### 修复\n- **AI 渠道「拉取模型」按钮补全**：渠道弹窗原来只有手填白名单、没有拉取按钮，现在新增「拉取模型」，\n  一键从各厂商 `/models` 拉取并合并进模型白名单（去重排序），保存前不会污染数据。\n\n### 兼容性\n- 学生端为**全新独立角色**，不影响现有教师/管理员流程；未开启学生功能的站点零影响。\n- 升级链防跳级延续：`from_version` 语义与前版一致（`assertEnvCompatible` 下载前守卫）。\n\n---",
     "files": [
         {
-            "name": "keshi-1.1.4.zip",
-            "url": "https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/v1.1.4/keshi-1.1.4.zip",
-            "sha256": "353115463004c4ff1bf2ea976b84d43bc8af705ea27b0e4e1afcb18da77650de",
-            "version": "1.1.4",
-            "size": 793575
+            "name": "keshi-1.2.0.zip",
+            "url": "https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/v1.2.0/keshi-1.2.0.zip",
+            "sha256": "b9939f67b4dc6df8edfec1cccf08c64603a0dcbb1cc5f001679309ce16e602f5",
+            "version": "1.2.0",
+            "size": 839258
         }
     ],
     "requires": {
         "from_version": "1.1.3"
     },
-    "signature": "qlsDrRUSykcVa8zvbr/4KRldJ/RwBKtSF3Tyjb+IsgwbfdjShqs4GASyNAQCzk79Hhqj4DUpmUF237kwSjw2jskSUCeKHAXh6ZyW/9/1UUhirBHanoXUI+j1tBhheVnpddk39+AvBpPVbZcU7obs1fUHwFnDYAcRFZKkj2iprc1Qjj9Mej0DqJ5MJupk2l9mp7N5xKwfdnrD65R1uo0iSc8GU65xrY+Y9TiJ2tBzsNbz++f9vdeZFjuJwGp8sVIiDt9qh1EndgFK8SFuXnv2E7ua/E7YvwPfmVjpsSN/8LiStfbJM+1BG5BiveeNNDV5PbD+PnzYHrOEveNLUxxvJg=="
+    "signature": "apkIiOZ7XuFM4l5d70ZU9KURtqfCfw6ftQltQb7N8nT1dVZnw0I/qohCtPC76bP4VzO+f6NyvfY66s1c3dFv4RdIT7y7zv6ftfTHyihaOGxWMcYJM30mV0REOPQoZWtUuCoh8EokSklDRKSxuQAZA4eX8xjCvUfrFgHj/95HmiBwdoaOAFdvBmWx8eshtB42UjU4/hvGXKcfMNSMizsuBiv1MdiKqzloUjH/Gaf9a7cvce5lPTb3uf50uzocskkKSKyh2UTkv/VJl2BmS0606t82I22dYmrMSIRcQEzMUJVgjOTtIJtRML0AkEbcgq8+sxeZaRJlxWSgmlpE16lNYg=="
 }

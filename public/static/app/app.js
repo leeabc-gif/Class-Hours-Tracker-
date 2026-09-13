@@ -569,6 +569,7 @@
       { p: 'my-courses', i: 'book', t: '我的课程' },
       { p: 'my-calendar', i: 'calendar3', t: '课表日历' },
       { p: 'my-stats', i: 'bar-chart', t: '我的统计' },
+      { p: 'admin-students', i: 'people-fill', t: '学生学情' },
       { p: 'ai', i: 'robot', t: 'AI 智能分析' },
       { p: 'ai-playground', i: 'joystick', t: 'AI 操练场' },
       { p: 'notice', i: 'megaphone', t: '通知公告' },
@@ -3213,6 +3214,7 @@
           <button type="button" class="btn btn-outline-primary" id="stuTabPending" onclick="KS.stuTab('pending')">待审核</button>
         </div>
         ${isAdmin ? '<button class="btn btn-primary btn-sm" onclick="KS.studentForm(0)"><i class="bi bi-person-plus me-1"></i>新增学生</button>' : ''}
+        ${isAdmin ? '<button class="btn btn-outline-primary btn-sm ms-1" onclick="KS.importStudents()"><i class="bi bi-upload me-1"></i>批量导入</button>' : ''}
       </div>
       <div class="card-b">
         <div class="d-flex gap-2 mb-2 flex-wrap align-items-center">
@@ -3274,13 +3276,17 @@
       const statusMap = { '0':'<span class="badge bg-secondary">禁用</span>', '1':'<span class="badge bg-success">正常</span>', '2':'<span class="badge bg-warning">待审核</span>' };
       const sourceMap = { 'import':'批量导入','register':'自助注册' };
       const genderMap = { '0':'—','1':'男','2':'女' };
-      const ops = isAdmin ? (
-        '<button class="btn btn-sm btn-outline-primary me-1" onclick="KS.studentForm('+s.id+')"><i class="bi bi-pencil"></i></button>'
+      const crudOps = isAdmin ? (
+        '<button class="btn btn-sm btn-outline-primary me-1" onclick="KS.studentForm('+s.id+')" title="编辑"><i class="bi bi-pencil"></i></button>'
         + (s.status==='2' ? '<button class="btn btn-sm btn-outline-success me-1" onclick="KS.approveStudent('+s.id+')">通过</button>' : '')
         + '<button class="btn btn-sm btn-outline-'+ (s.status==='1'?'danger':'success') +' me-1" onclick="KS.studentToggle('+s.id+','+(s.status==='1'?0:1)+')">'
         + (s.status==='1'?'禁用':'启用')+'</button>'
-        + '<button class="btn btn-sm btn-outline-danger" onclick="KS.studentDelete('+s.id+')"><i class="bi bi-trash"></i></button>'
-      ) : '<span class="text-muted small">只读</span>'; // 教师不可操作
+        + '<button class="btn btn-sm btn-outline-danger" onclick="KS.studentDelete('+s.id+')" title="删除"><i class="bi bi-trash"></i></button>'
+      ) : '';
+      const commonOps = '<button class="btn btn-sm btn-outline-info me-1" onclick="KS.learningProfile('+s.id+')" title="学情摘要"><i class="bi bi-graph-up"></i></button>'
+        + '<button class="btn btn-sm btn-outline-success me-1" onclick="KS.recordAtt('+s.id+')" title="记出勤"><i class="bi bi-calendar-check"></i></button>'
+        + '<button class="btn btn-sm btn-outline-warning me-1" onclick="KS.recordScr('+s.id+')" title="记成绩"><i class="bi bi-trophy"></i></button>';
+      const ops = crudOps || commonOps || '<span class="text-muted small">—</span>';
       return '<tr><td>'+esc(s.sno)+'</td><td>'+esc(s.name)+'</td><td>'+esc(s.class_name)+'</td>'
         + '<td>'+genderMap[s.gender]+'</td><td>'+s.year+'</td>'
         + '<td>'+statusMap[s.status]+'</td><td>'+sourceMap[s.source]+'</td>'
@@ -3299,6 +3305,212 @@
     } else {
       $('#stuPagination').innerHTML='';
     }
+  };
+
+  KS.importStudents = function(){
+    const isAdmin = App.user && App.user.role === 'admin';
+    if(!isAdmin){ toast('仅管理员可操作','warn'); return; }
+    openModal('批量导入学生', `
+      <div class="mb-2 small text-muted">每行一条记录，格式：<code>学号,姓名,性别,班级ID,入学年,手机号</code></div>
+      <div class="mb-2 small text-muted">性别：0=未知 1=男 2=女；班级ID留空=不指定</div>
+      <textarea id="importCsv" class="form-control" rows="10" placeholder="2025001,张三,1,,2026,13800138000&#10;2025002,李四,2,3,2026,"
+        style="font-family:monospace;font-size:13px"></textarea>
+      <div id="importResult" class="mt-2 small d-none"></div>
+    `, [
+      {t:'取消',c:'btn-light',x:true},
+      {t:'开始导入',c:'btn-primary',act:KS.doImportStudents}
+    ]);
+  };
+
+  KS.doImportStudents = async function(){
+    const raw = ($('#importCsv').value||'').trim();
+    if(!raw){ toast('请粘贴学生数据','warn'); return; }
+    const lines = raw.split('\n').filter(function(l){ return l.trim(); });
+    const students = [];
+    const errors = [];
+    // 尝试解析 CSV（支持 Tab / 逗号 / 空格分隔）
+    for(let i=0;i<lines.length;i++){
+      const parts = lines[i].split(/[\t,，\s]+/).filter(function(p){ return p; });
+      const sno   = parts[0]||'';
+      const name  = parts[1]||'';
+      const gender = parseInt(parts[2],10)||0;
+      const classId = parseInt(parts[3],10)||0;
+      const year  = parseInt(parts[4],10)||0;
+      const phone = parts[5]||'';
+      if(!sno || !name){ errors.push('第'+(i+1)+'行：缺少学号或姓名 ['+lines[i]+']'); continue; }
+      students.push({sno,name,gender,class_id:classId,year,phone});
+    }
+    if(!students.length){ showErr('importResult','没有可导入的有效数据'); return; }
+    $('#importResult').classList.remove('d-none','alert-success','alert-danger');
+    $('#importResult').innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>正在导入 '+students.length+' 条…';
+    const res=await POST('/api/studentadmin/importStudents',{students:students});
+    if(res.code!==0){
+      $('#importResult').className = 'mt-2 small alert alert-danger';
+      $('#importResult').innerHTML = res.msg;
+      return;
+    }
+    let html = '<div class="alert alert-success mb-0">✅ '+res.msg+'</div>';
+    if(res.data.errors && res.data.errors.length){
+      html += '<div class="mt-1 small text-danger">失败明细：<br>'+res.data.errors.slice(0,10).join('<br>')
+        +(res.data.errors.length>10?'<br>…还有'+(res.data.errors.length-10)+'条':'')+'</div>';
+    }
+    $('#importResult').className = 'mt-2';
+    $('#importResult').innerHTML = html;
+    KS.loadStudents();
+    // 关闭按钮
+    const closeBtn = document.querySelector('#modal .btn-light:first-child');
+    if(closeBtn) closeBtn.textContent = '关闭';
+  };
+
+  // ===== 学情摘要 =====
+  KS.learningProfile = async function(id){
+    const s = studentCache.list.find(function(x){return x.id===id;});
+    if(!s){ toast('找不到学生','warn'); return; }
+    const res = await GET('/api/studentadmin/learningProfile', {student_id:id});
+    if(res.code!==0){ toast(res.msg || '学情加载失败','err'); return; }
+    const d = res.data || {}, a = d.attendance || {}, sc = d.scores || {}, ai = d.ai || {};
+    const rate = a.rate === null || a.rate === undefined ? '暂无' : Math.round(a.rate*100)+'%';
+    const scoreRows = (sc.latest||[]).slice(0,8).map(function(x){
+      return '<tr><td>'+esc(x.course_name||'—')+'</td><td>'+esc(x.title||'—')+'</td><td>'+(x.score===null?'—':esc(String(x.score)))+'</td><td>'+esc(x.grade||'—')+'</td></tr>';
+    }).join('');
+    const questions = (ai.recent_questions||[]).map(function(x){
+      return '<li>'+esc(x.content||'')+'</li>';
+    }).join('') || '<li class="text-muted">暂无提问记录</li>';
+    openModal('学情摘要：'+esc((d.student&&d.student.name)||s.name),
+      '<div class="row g-2 mb-3">'
+      + '<div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">出勤率</div><b>'+rate+'</b></div></div>'
+      + '<div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">出勤记录</div><b>'+a.total+'</b></div></div>'
+      + '<div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">成绩均分</div><b>'+(sc.average===null?'暂无':sc.average)+'</b></div></div>'
+      + '<div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">AI提问</div><b>'+ai.message_count+'</b></div></div></div>'
+      + '<div class="small mb-2">出勤：出勤 '+a.present+'，缺勤 '+a.absent+'，请假 '+a.leave+'，迟到 '+a.late+'，早退 '+a.early+'</div>'
+      + '<div class="table-responsive mb-2"><table class="table table-sm"><thead><tr><th>课程</th><th>考核项</th><th>分数</th><th>等级</th></tr></thead><tbody>'+(scoreRows||'<tr><td colspan="4" class="text-muted">暂无成绩记录</td></tr>')+'</tbody></table></div>'
+      + '<div class="small text-muted mb-1">最近提问</div><ul class="small mb-0">'+questions+'</ul>'
+      + '<div id="learningAiResult" class="mt-3"></div>',
+      [{t:'关闭',c:'btn-light',x:true},{t:'生成 AI 建议',c:'btn-primary',act:function(){ KS.analyzeLearning(id); }}]);
+  };
+
+  KS.analyzeLearning = async function(id){
+    const box = $('#learningAiResult');
+    if(!box){ return; }
+    box.innerHTML = '<div class="small text-muted"><span class="spinner-border spinner-border-sm me-1"></span>正在生成建议…</div>';
+    const res = await POST('/api/studentadmin/analyzeLearning', {student_id:id});
+    if(res.code!==0){ box.innerHTML = '<div class="alert alert-danger small mb-0">'+esc(res.msg||'分析失败')+'</div>'; return; }
+    const d = res.data || {};
+    box.innerHTML = '<div class="border rounded p-2 bg-light"><div class="small text-muted mb-1">AI 教学建议'+(d.model?' · '+esc(d.model):'')+'</div><div class="small" style="white-space:pre-wrap">'+esc(d.content||'暂无建议')+'</div></div>';
+  };
+
+  // ===== 记出勤 =====
+  KS.recordAtt = async function(id){
+    const s = studentCache.list.find(function(x){return x.id===id;});
+    if(!s){ toast('找不到学生'); return; }
+    // 获取课程列表
+    const courseRes = await GET('/api/admin/courses');
+    const courses = (courseRes.code===0 && courseRes.data) ? courseRes.data : [];
+    const courseOpts = '<option value="0">— 请选择课程 —</option>' + courses.map(function(c){
+      return '<option value="'+c.id+'" data-name="'+esc(c.name)+'">'+esc(c.name)+'</option>';
+    }).join('');
+    openModal('记出勤：'+esc(s.name), `
+      <input type="hidden" id="attStuId" value="${s.id}">
+      <div class="mb-2"><label class="form-label small">学生</label><input class="form-control" value="${esc(s.name)}（${esc(s.sno)}）" disabled></div>
+      <div class="mb-2"><label class="form-label small">课程 <span class="text-danger">*</span></label>
+        <select id="attCourse" class="form-select" onchange="document.getElementById('attCourseName').value=this.options[this.selectedIndex].dataset.name||''">${courseOpts}</select>
+        <input id="attCourseName" type="hidden" value=""></div>
+      <div class="row g-2 mb-2">
+        <div class="col-6"><label class="form-label small">出勤状态 <span class="text-danger">*</span></label>
+          <select id="attStatus" class="form-select">
+            <option value="present">出勤</option><option value="absent">缺勤</option>
+            <option value="leave">请假</option><option value="late">迟到</option><option value="early">早退</option>
+          </select></div>
+        <div class="col-6"><label class="form-label small">日期</label><input id="attDate" type="date" class="form-control" value="${new Date().toISOString().slice(0,10)}"></div>
+      </div>
+      <div class="mb-2"><label class="form-label small">备注</label><input id="attNote" class="form-control" placeholder="可选"></div>
+    `, [
+      {t:'取消',c:'btn-light',x:true},
+      {t:'保存',c:'btn-success',act:KS.doRecordAtt}
+    ]);
+  };
+
+  KS.doRecordAtt = async function(){
+    const studentId = parseInt($('#attStuId').value,10);
+    const student = studentCache.list.find(function(x){return x.id===studentId;});
+    if(!student){ toast('找不到学生','warn'); return; }
+    const courseId = parseInt($('#attCourse').value,10);
+    const courseName = $('#attCourseName').value||$('#attCourse option:checked').textContent||'';
+    const status = $('#attStatus').value;
+    const dateVal = $('#attDate').value;
+    const note = $('#attNote').value.trim();
+    if(!courseId || !courseName){ toast('请选择课程','warn'); return; }
+    if(!dateVal){ toast('请选择日期','warn'); return; }
+    // 查找或创建该课时（按 course_name + teach_date 匹配）
+    const dateTs = Math.floor(new Date(dateVal+'T00:00:00').getTime()/1000);
+    // 先尝试查找已有课时
+    const existRes = await GET('/api/admin/lessons?limit=1&course_id='+courseId+'&start_date='+dateVal+'&end_date='+dateVal);
+    let lessonId = 0;
+    if(existRes.code===0 && existRes.data.list && existRes.data.list.length){
+      lessonId = existRes.data.list[0].id;
+    }
+    if(!lessonId){
+      // 自动创建课时必须带学生真实班级，否则后端无法安全校验教师权限。
+      const className = String(student.class_name || '').trim();
+      if(!className || className === '—'){
+        toast('该学生尚未分配班级，无法创建出勤课时','warn'); return;
+      }
+      const createRes = await POST('/api/admin/lessonSave', {
+        course_id: courseId, course_name: courseName, teacher_id: (App.user.teacher_id||App.user.id||0),
+        classes: className, type: 'normal',
+        teach_date: dateVal, start_time: '', end_time: '',
+        price: 0, status: 1
+      });
+      if(createRes.code!==0){ toast('创建课时失败：'+createRes.msg,'err'); return; }
+      lessonId = createRes.data.id;
+    }
+    const res = await POST('/api/studentadmin/recordAttendance', {
+      lesson_id: lessonId,
+      students: [{student_id: studentId, status: status, note: note}]
+    });
+    if(res.code!==0){ toast(res.msg,'err'); return; }
+    hideModal(); toast('出勤已记录'); KS.loadStudents();
+  };
+
+  // ===== 记成绩 =====
+  KS.recordScr = async function(id){
+    const s = studentCache.list.find(function(x){return x.id===id;});
+    if(!s){ toast('找不到学生'); return; }
+    openModal('记成绩：'+esc(s.name), `
+      <input type="hidden" id="scrStuId" value="${s.id}">
+      <div class="mb-2"><label class="form-label small">学生</label><input class="form-control" value="${esc(s.name)}（${esc(s.sno)}）" disabled></div>
+      <div class="mb-2"><label class="form-label small">课程名称 <span class="text-danger">*</span></label>
+        <input id="scrCourseName" class="form-control" placeholder="如 工业机器人导论"></div>
+      <div class="mb-2"><label class="form-label small">考核项名称 <span class="text-danger">*</span></label>
+        <input id="scrTitle" class="form-control" placeholder="如 期中考试 / 实训项目1"></div>
+      <div class="row g-2 mb-2">
+        <div class="col-6"><label class="form-label small">分数</label><input id="scrScore" type="number" step="0.5" class="form-control" placeholder="如 85"></div>
+        <div class="col-6"><label class="form-label small">等级</label><input id="scrGrade" class="form-control" placeholder="如 优秀 / A"></div>
+      </div>
+      <div class="mb-2"><label class="form-label small">评语</label>
+        <textarea id="scrComment" class="form-control" rows="3" placeholder="可选评语"></textarea></div>
+    `, [
+      {t:'取消',c:'btn-light',x:true},
+      {t:'保存',c:'btn-primary',act:KS.doRecordScr}
+    ]);
+  };
+
+  KS.doRecordScr = async function(){
+    const studentId = parseInt($('#scrStuId').value,10);
+    const courseName = $('#scrCourseName').value.trim();
+    const title = $('#scrTitle').value.trim();
+    const score = $('#scrScore').value;
+    const grade = $('#scrGrade').value.trim();
+    const comment = $('#scrComment').value.trim();
+    if(!courseName){ toast('请填写课程名称','warn'); return; }
+    if(!title){ toast('请填写考核项名称','warn'); return; }
+    const res = await POST('/api/studentadmin/recordScore', {
+      student_id: studentId, course_name: courseName, title: title,
+      score: score!=='' ? parseFloat(score) : null,
+      grade: grade, comment: comment
+    });
+    if(res.code!==0){ toast(res.msg,'err'); return; }
+    hideModal(); toast('成绩已记录'); KS.loadStudents();
   };
 
   KS.studentForm = async function(id){
@@ -3380,7 +3592,7 @@
         <div class="table-responsive"><table class="table"><thead><tr><th>院系</th><th>教师数</th><th style="width:90px">操作</th></tr></thead><tbody id="deptTbody"></tbody></table></div></div>
         <div class="card mb-3"><div class="card-h"><i class="bi bi-people text-primary"></i><span class="tt">班级管理</span>
           <div class="flex-grow-1"></div><button class="btn btn-sm btn-primary" onclick="KS.classForm()">新增班级</button></div>
-          <div class="table-responsive" style="max-height:340px;overflow:auto"><table class="table"><thead><tr><th>班级</th><th>所属院系</th><th>年级</th><th>状态</th><th>引用</th><th style="width:90px">操作</th></tr></thead><tbody id="classTbody"></tbody></table></div></div>
+          <div class="table-responsive" style="max-height:340px;overflow:auto"><table class="table"><thead><tr><th>班级</th><th>所属院系</th><th>年级</th><th>注册口令</th><th>状态</th><th>引用</th><th style="width:90px">操作</th></tr></thead><tbody id="classTbody"></tbody></table></div></div>
         <div class="card mb-3"><div class="card-h"><i class="bi bi-collection text-primary"></i><span class="tt">学期配置</span>
           <div class="flex-grow-1"></div><button class="btn btn-sm btn-primary" onclick="KS.termForm()">新增学期</button></div>
           <div class="table-responsive"><table class="table"><thead><tr><th>学期</th><th>周次</th><th>开学日</th><th>课时</th><th style="width:180px">操作</th></tr></thead><tbody id="termTbody"></tbody></table></div></div></div>
@@ -3454,11 +3666,12 @@
       return '<tr><td><b>'+esc(c.name)+'</b></td>'
         +'<td>'+esc(deptName)+'</td>'
         +'<td>'+(c.year||'—')+'</td>'
+        +'<td>'+(c.join_code?'<code class="small">'+esc(c.join_code)+'</code>':'<span class="text-muted">未设置</span>')+'</td>'
         +'<td>'+(c.status?'<span class="badge bg-success">启用</span>':'<span class="badge bg-secondary">停用</span>')+'</td>'
         +'<td class="text-end">'+c.lesson_count+'</td>'
         +'<td><button class="btn btn-sm btn-outline-secondary py-0" onclick="KS.classForm('+c.id+')">编辑</button> '
         +'<button class="btn btn-sm btn-outline-danger py-0" onclick="KS.classDel('+c.id+','+jsStr(c.name)+')">删</button></td></tr>';
-    }).join(''):'<tr><td colspan="6"><div class="dk-empty"><i class="bi bi-people"></i>暂无班级</div></td></tr>';
+    }).join(''):'<tr><td colspan="7"><div class="dk-empty"><i class="bi bi-people"></i>暂无班级</div></td></tr>';
   }
   App.classForm=async function(id){
     const [clsRes, deptRes]=await Promise.all([id?GET('/api/admin/classes'):Promise.resolve({code:0,data:[]}), GET('/api/admin/departments')]);
@@ -3469,13 +3682,14 @@
     openModal('班级', `<div class="row g-2"><div class="col-12"><label class="form-label">班级名称</label><input id="clName" class="form-control" value="${c?esc(c.name):''}"></div>
       <div class="col-7"><label class="form-label">所属院系</label><select id="clDept" class="form-select"><option value="0">未指定</option>${deptOpts}</select></div>
       <div class="col-5"><label class="form-label">入学年份</label><input id="clYear" type="number" class="form-control" value="${c?(c.year||''):new Date().getFullYear()-1}"></div>
+      <div class="col-6"><label class="form-label">注册口令</label><input id="clJoinCode" class="form-control" placeholder="4-16位字母数字，留空=关闭自助注册" value="${c?esc(c.join_code||''):''}" maxlength="16"></div>
       <div class="col-6"><label class="form-label">排序</label><input id="clSort" type="number" class="form-control" value="${c?c.sort:0}"></div>
       <div class="col-6"><label class="form-label">状态</label><select id="clStatus" class="form-select"><option value="1" ${(!c||c.status===1)?'selected':''}>启用</option><option value="0" ${(c&&c.status===0)?'selected':''}>停用</option></select></div>
       <div class="col-12"><label class="form-label">备注</label><input id="clRemark" class="form-control" value="${c?esc(c.remark||''):''}"></div></div>`,
       [{t:'取消',c:'btn-light',x:true},{t:'保存',c:'btn-primary',act:()=>KS.classSave(id)}]);
   };
   App.classSave=async function(id){
-    const payload={name:$('#clName').value.trim(),department_id:parseInt($('#clDept').value||0,10),year:parseInt($('#clYear').value||0,10),status:parseInt($('#clStatus').value||1,10),sort:parseInt($('#clSort').value||0,10),remark:$('#clRemark').value.trim()};
+    const payload={name:$('#clName').value.trim(),department_id:parseInt($('#clDept').value||0,10),year:parseInt($('#clYear').value||0,10),status:parseInt($('#clStatus').value||1,10),sort:parseInt($('#clSort').value||0,10),remark:$('#clRemark').value.trim(),join_code:$('#clJoinCode').value.trim()};
     if(!payload.name){toast('请填名称','warn');return;}
     if(id)payload.id=id;
     const res=await POST('/api/admin/classSave',payload);

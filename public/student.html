@@ -17,12 +17,20 @@ body{background:#f0f2f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",
 .bottom-nav .nav-item{flex:1;text-align:center;padding:4px 0;color:#999;font-size:11px;cursor:pointer}
 .bottom-nav .nav-item i{font-size:20px;display:block;margin-bottom:2px}
 .bottom-nav .nav-item.active{color:var(--bs-primary)}
-.chat-msg{padding:8px 12px;border-radius:12px;max-width:85%;margin-bottom:8px;word-break:break-word}
+.chat-msg{padding:8px 12px;border-radius:12px;max-width:85%;margin-bottom:8px;word-break:break-word;white-space:pre-wrap}
 .chat-msg.user{background:var(--bs-primary);color:#fff;margin-left:auto;border-bottom-right-radius:4px}
 .chat-msg.assistant{background:#e9ecef;color:#333;margin-right:auto;border-bottom-left-radius:4px}
 .lds-ring{display:inline-block;position:relative;width:20px;height:20px}
 .lds-ring div{box-sizing:border-box;display:block;position:absolute;width:16px;height:16px;margin:2px;border:2px solid #fff;border-radius:50%;animation:lds-ring 1.2s cubic-bezier(.5,0,.5,1) infinite;border-color:#fff transparent transparent transparent}
 @keyframes lds-ring{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+.conv-item{cursor:pointer;padding:10px 14px;border-bottom:1px solid #f0f0f0}
+.conv-item:hover{background:#f8f9fa}
+.conv-item.active{background:#e8f4fd}
+.conv-item .title{font-weight:500;font-size:14px}
+.conv-item .meta{font-size:11px;color:#999}
+#quotaBadge{font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(255,255,255,.2);color:#fff}
+#convPanel{position:fixed;top:0;left:0;right:0;bottom:0;background:#fff;z-index:1050;transform:translateX(-100%);transition:transform .25s ease}
+#convPanel.open{transform:translateX(0)}
 </style>
 </head><body>
 
@@ -93,9 +101,11 @@ body{background:#f0f2f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",
 <div id="pageAi" class="page">
   <div class="px-3 pt-3 pb-2 bg-success text-white d-flex align-items-center gap-2">
     <i class="bi bi-arrow-left" style="font-size:20px;cursor:pointer" onclick="showPage('pageHome')"></i>
-    <span class="fw-bold">AI 答疑助手</span>
+    <span class="fw-bold">AI 答疑</span>
+    <span id="quotaBadge"></span>
     <div class="flex-grow-1"></div>
-    <i class="bi bi-trash" style="font-size:16px;cursor:pointer" onclick="clearChat()"></i>
+    <i class="bi bi-clock-history" style="font-size:16px;cursor:pointer" onclick="toggleConvPanel()" title="历史对话"></i>
+    <i class="bi bi-trash" style="font-size:16px;cursor:pointer;margin-left:8px" onclick="clearChat()"></i>
   </div>
   <div class="px-3 mt-2" style="max-height:calc(100vh - 160px);overflow-y:auto" id="chatBox">
     <div class="text-center text-muted small py-4">有什么问题可以问我～</div>
@@ -103,8 +113,21 @@ body{background:#f0f2f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",
   <div class="px-3 pb-3" style="position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #eee;padding-bottom:env(safe-area-inset-bottom)">
     <div class="input-group mt-2">
       <input id="chatInput" class="form-control" placeholder="输入问题..." style="border-radius:20px 0 0 20px" onkeydown="if(event.key==='Enter')doChat()">
-      <button class="btn btn-success" style="border-radius:0 20px 20px 0" onclick="doChat()"><i class="bi bi-send"></i></button>
+      <button id="chatSendBtn" class="btn btn-success" style="border-radius:0 20px 20px 0" onclick="doChat()"><i class="bi bi-send"></i></button>
     </div>
+  </div>
+</div>
+
+<!-- 历史会话面板 -->
+<div id="convPanel">
+  <div class="px-3 pt-3 pb-2 bg-success text-white d-flex align-items-center">
+    <i class="bi bi-x-lg" style="font-size:16px;cursor:pointer" onclick="toggleConvPanel()"></i>
+    <span class="fw-bold ms-2">历史对话</span>
+    <div class="flex-grow-1"></div>
+    <span class="small opacity-75" id="convCount">0 条</span>
+  </div>
+  <div class="px-3 mt-2" id="convList">
+    <p class="text-muted text-center py-4 small">加载中…</p>
   </div>
 </div>
 
@@ -147,16 +170,15 @@ function hideErr(id){ const el=$(id); if(el) el.classList.add('d-none'); }
 function showPage(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   $(id).classList.add('active');
-  // 底部导航
   const navMap={'pageHome':0,'pageAttendance':1,'pageScores':2,'pageAi':3};
   document.querySelectorAll('.bottom-nav .nav-item').forEach((n,i)=>{
     n.classList.toggle('active', i===navMap[id]);
   });
   const navPages=['pageHome','pageAttendance','pageScores','pageAi'];
   $(id) && navPages.includes(id) ? $('bottomNav').classList.remove('d-none') : $('bottomNav').classList.add('d-none');
-  // 数据加载
   if(id==='pageAttendance') loadAttendance();
   if(id==='pageScores') loadScores();
+  if(id==='pageAi'){ updateQuotaBadge(); }
 }
 
 // ========== 登录 ==========
@@ -228,50 +250,166 @@ async function loadScores(){
   }).join('');
 }
 
-// ========== AI 答疑（基础版 - 非流式）==========
-let chatHistory=[];
-let currentConvId=0;
+// ========== AI 答疑（SSE 流式）==========
+let currentConvId = 0;
+let isChatting = false;
+let abortController = null;
+
+async function updateQuotaBadge(){
+  try {
+    const r = await GET('/api/studentportal/quota');
+    if(r.code===0 && r.data){
+      const q = r.data;
+      const dailyLimit = Number(q.daily_limit || 0);
+      $('quotaBadge').textContent = (q.balance || '0') + ' / ' + (dailyLimit > 0 ? dailyLimit : '不限');
+    }
+  } catch(e){}
+}
 
 async function doChat(){
+  if(isChatting) return;
   const input=$('chatInput');
   const msg=input.value.trim();
   if(!msg) return;
   input.value='';
   appendChat('user',msg);
-  chatHistory.push({role:'user',content:msg});
-  // 显示加载动画
+  $('chatSendBtn').disabled=true;
+  isChatting=true;
+
+  // 显示加载占位
   const box=$('chatBox');
   const loadingId='chatLoading';
-  box.innerHTML+='<div class="chat-msg assistant" id="'+loadingId+'"><div class="lds-ring"><div></div><div></div><div></div><div></div></div> 思考中…</div>';
+  box.innerHTML+='<div class="chat-msg assistant" id="'+loadingId+'"><div class="lds-ring"><div></div><div></div><div></div><div></div></div></div>';
   box.scrollTop=box.scrollHeight;
-  
-  const r=await POST('/api/studentportal/aiChat',{
-    message: msg,
-    conversation_id: currentConvId
-  });
-  const loadingEl = $(loadingId);
-  if(loadingEl) loadingEl.remove();
-  if(r.code!==0){
-    appendChat('assistant','❌ '+r.msg);
-    chatHistory.push({role:'assistant',content:r.msg});
-    return;
+
+  abortController = new AbortController();
+  try {
+    const resp = await fetch('/api/studentportal/aiChatStream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': _csrf || ''
+      },
+      body: JSON.stringify({ message: msg, conversation_id: currentConvId }),
+      signal: abortController.signal
+    });
+
+    // 移除加载占位，添加流式消息容器
+    const loadEl = $(loadingId);
+    if(loadEl) loadEl.remove();
+    const msgId = 'streamMsg' + Date.now();
+    box.innerHTML+='<div class="chat-msg assistant" id="'+msgId+'"></div>';
+    box.scrollTop=box.scrollHeight;
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while(true){
+      const {done, value} = await reader.read();
+      if(done) break;
+      buffer += decoder.decode(value, {stream: true});
+      // 解析 SSE data: 行
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for(const line of lines){
+        if(line.startsWith('data: ')){
+          const payload = line.slice(6).trim();
+          if(payload === '[DONE]') continue;
+          try {
+            const data = JSON.parse(payload);
+            if(data.error){
+              $(msgId).textContent = '❌ ' + data.error;
+              break;
+            }
+            if(data.done){
+              currentConvId = data.conversation_id || currentConvId;
+              if(data.points !== undefined && data.quota){
+                updateQuotaBadge();
+              }
+              continue;
+            }
+            // 内容块
+            const content = data.choices && data.choices[0] && data.choices[0].delta && data.choices[0].delta.content;
+            if(content){
+              $(msgId).textContent += content;
+              box.scrollTop = box.scrollHeight;
+            }
+          } catch(e){}
+        }
+      }
+    }
+  } catch(e){
+    if(e.name !== 'AbortError'){
+      const loadEl = $(loadingId);
+      if(loadEl) loadEl.remove();
+      appendChat('assistant','❌ 请求失败：'+e.message);
+    }
+  } finally {
+    abortController = null;
+    isChatting = false;
+    $('chatSendBtn').disabled=false;
+    // 清除 loading（如有残留）
+    const loadEl = $(loadingId);
+    if(loadEl) loadEl.remove();
   }
-  const reply=r.data.reply;
-  currentConvId=r.data.conversation_id||0;
-  appendChat('assistant',reply);
-  chatHistory.push({role:'assistant',content:reply});
 }
 
-function appendChat(role,content){
+function appendChat(role, content){
   const box=$('chatBox');
-  box.innerHTML+='<div class="chat-msg '+role+'">'+esc(content)+'</div>';
+  const escaped = esc(content).replace(/\n/g, '&#10;');
+  box.innerHTML+='<div class="chat-msg '+role+'">'+escaped+'</div>';
   box.scrollTop=box.scrollHeight;
 }
 
 function clearChat(){
+  if(isChatting && abortController){ abortController.abort(); }
   currentConvId=0;
-  chatHistory=[];
-  $('chatBox').innerHTML='<div class="text-center text-muted small py-4">新的对话已开始～</div>';
+  $('chatBox').innerHTML='<div class="text-center text-muted small py-4">有什么问题可以问我～</div>';
+  updateQuotaBadge();
+}
+
+// ========== 历史会话面板 ==========
+function toggleConvPanel(){
+  const p = $('convPanel');
+  p.classList.toggle('open');
+  if(p.classList.contains('open')) loadConversations();
+}
+
+async function loadConversations(){
+  $('convList').innerHTML = '<p class="text-muted text-center py-4 small">加载中…</p>';
+  const r = await GET('/api/studentportal/aiConversations');
+  if(r.code!==0){ $('convList').innerHTML = '<p class="text-danger text-center py-4 small">'+r.msg+'</p>'; return; }
+  const list = r.data.list || [];
+  $('convCount').textContent = list.length + ' 条';
+  if(!list.length){
+    $('convList').innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-inbox" style="font-size:24px;display:block;margin-bottom:4px"></i><span class="small">暂无历史对话</span></div>';
+    return;
+  }
+  $('convList').innerHTML = list.map(function(c){
+    return '<div class="conv-item'+(c.id===currentConvId?' active':'')+'" onclick="openConversation('+c.id+')">'
+      + '<div class="title">' + esc(c.title||'新对话') + '</div>'
+      + '<div class="meta">' + dateStr(c.updated_at) + ' · ' + (c.msg_count||0) + ' 条</div>'
+      + '</div>';
+  }).join('');
+}
+
+async function openConversation(id){
+  currentConvId = id;
+  toggleConvPanel(); // 关面板
+  // 加载历史消息
+  const r = await GET('/api/studentportal/aiMessages?conversation_id='+id);
+  $('chatBox').innerHTML = '<div class="text-center text-muted small py-4">加载中…</div>';
+  if(r.code!==0 || !r.data.list){
+    $('chatBox').innerHTML = '<div class="text-center text-muted small py-4">无法加载消息</div>';
+    return;
+  }
+  const msgs = r.data.list;
+  $('chatBox').innerHTML = msgs.map(function(m){
+    const escaped = esc(m.content).replace(/\n/g, '&#10;');
+    return '<div class="chat-msg '+(m.role||'assistant')+'">'+escaped+'</div>';
+  }).join('') || '<div class="text-center text-muted small py-4">空会话</div>';
+  $('chatBox').scrollTop = $('chatBox').scrollHeight;
 }
 
 // ========== 工具 ==========
@@ -285,7 +423,6 @@ function dateStr(ts){
 // ========== 启动 ==========
 (async function init(){
   await getCsrf();
-  // 尝试恢复会话
   const r = await GET('/api/studentauth/me');
   if(r.code===0 && r.data && r.data.student){
     _student=r.data.student;
