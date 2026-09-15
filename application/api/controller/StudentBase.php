@@ -29,7 +29,8 @@ class StudentBase extends Controller
     /** 失败响应 */
     protected function fail($msg = '操作失败', $code = 1, $data = null)
     {
-        return json(['code' => $code, 'msg' => $msg, 'data' => $data]);
+        $httpCode = ($code >= 400 && $code <= 599) ? (int)$code : 200;
+        return json(['code' => $code, 'msg' => $msg, 'data' => $data], $httpCode);
     }
 
     /** 要求已登录，否则抛 401 */

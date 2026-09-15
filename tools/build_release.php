@@ -37,23 +37,27 @@ if ($version === '') {
 }
 
 // ---------- 1) 挑选 upgrade.sql ----------
-$plain   = str_replace('.', '', $version);
-$migDir  = $root . '/database/migrations';
-$candidates = [
-    $migDir . "/20260909_v{$plain}_version_sync.sql",
-    $migDir . "/20260909_{$plain}_version_sync.sql",
-    $migDir . "/20260910_v{$plain}_version_sync.sql",
-    $migDir . "/20260910_{$plain}_version_sync.sql",
-];
-$mig = '';
-foreach ($candidates as $c) {
-    if (is_file($c)) { $mig = $c; break; }
+$plain  = str_replace('.', '', $version);
+$migDir = $root . '/database/migrations';
+$mig    = '';
+
+// 迁移文件日期可能晚于版本发布日期，按版本号精确匹配，不能把日期写死。
+foreach ([$migDir . "/*_v{$plain}_version_sync.sql", $migDir . "/*_{$plain}_version_sync.sql"] as $pattern) {
+    $matches = glob($pattern) ?: [];
+    sort($matches);
+    if ($matches) {
+        $mig = end($matches);
+        break;
+    }
 }
 if ($mig === '') {
-    // 退路：取版本号最大的 *_version_sync.sql
+    // 兼容历史缺少精确版本迁移的旧构建场景，但明确提示这是兜底选择。
     $all = glob($migDir . '/*_version_sync.sql') ?: [];
     sort($all);
     $mig = $all ? end($all) : '';
+    if ($mig !== '') {
+        echo "警告：未找到 v{$plain} 精确迁移，兜底使用 " . basename($mig) . "\n";
+    }
 }
 if ($mig !== '' && is_file($mig)) {
     copy($mig, $root . '/upgrade.sql');

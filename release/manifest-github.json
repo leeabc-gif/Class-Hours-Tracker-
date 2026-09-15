@@ -1,19 +1,19 @@
 {
-    "latest_version": "1.2.1",
+    "latest_version": "1.2.2",
     "min_php": "7.4",
-    "published_at": "2026-09-13T09:00:00+00:00",
-    "changelog": "- 新增教师侧学生学情摘要与 AI 教学建议入口。\n- 加固学生注册并发重复学号处理、教师出勤班级权限校验。\n- 学生 AI 流式答疑、额度展示与历史会话体验修复。\n- 本版本为维护版升级，数据库仅同步版本号，不重复执行学生模块建表迁移。\n- 最低可升级版本：1.1.3。",
+    "published_at": "2026-09-15T04:31:24+00:00",
+    "changelog": "### 修复\n- 修复学生端 AI 答疑页在 375px 等移动视口下，固定底部导航遮挡输入栏发送按钮的问题；AI 页面进入后隐藏全局底部导航，保留页面自身返回和历史会话入口。\n- 补充学生端真实 SSE 答疑回归夹具，验证流式正文、学生额度扣减和历史会话恢复链路。\n- 完成教师/管理员学生学情页面的班级权限、空班、风险学生详情和班级 AI 建议浏览器回归。\n\n### 数据库\n- 新增 `20260912_v122_version_sync.sql`，仅同步 `ks_setting.app_version`，不含 DDL；已完成 v1.2.0 学生模块建表的站点可直接升级。\n\n### 兼容性\n- 最低可升级版本：1.1.3。",
     "files": [
         {
-            "name": "keshi-1.2.1.zip",
-            "url": "https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/v1.2.1/keshi-1.2.1.zip",
-            "sha256": "1457344bb55b9fcacf126e4bea2457d452f0d06c572b2ac389d9190bef45661e",
-            "version": "1.2.1",
-            "size": 835844
+            "name": "keshi-1.2.2.zip",
+            "url": "https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/v1.2.2/keshi-1.2.2.zip",
+            "sha256": "2919aef5d8e695c9d6b04c19741aa1bf7807fa947c4834e4ca68b5ab0abde7c5",
+            "version": "1.2.2",
+            "size": 841827
         }
     ],
     "requires": {
         "from_version": "1.1.3"
     },
-    "signature": "TT6Wgrm/H0ZFbILbsRFCoQfZbs0hZhLaULXVpagmtFSaSygIk1ij+EJhfRFhBSaErgBUtwZUmF0f7EOOS/8HszheW+LIoI4R3qBrNfu2qm9vtw2qxB2DVO+ZezA3t0pqiMPE9WhEtS82heOlvO80ad3k3GP6bctqWmzJxVeBhq7ws9RxmS5GHCAsPCt18QK9/KLl/1pgnuiqDH1PCWWBbSm063s73wt7d51ifwCPk/6L+nOH0Qu0+EMPHvUgJjKicG3OsrB/Oli2U24ePpbG5pDysajprarqB8b8PJyst5d2G3Ix9QfNxQM5/asUNlqJCEikiqFMjN8c2MUrwaa2Wg=="
+    "signature": "dG0I3Zaw0tO1WVTH+BG21Cf64HldzgPvsQPVDFdEtwydi8Y5D/92+FkDpcFlzxXcQXLnV9tjVM2nSyLjk7vIo9Dt8SsOjqM3u5nyVtpgm5NMU33foBcmclsjvNvIjzAzOyT/TuI7BcrR43uyihftJDqONBcDW55gEU9sVm5C3Rz87HCJcB6xlKeGdlOqZgcaPc3SfeR89U+e7D+J9uezWtRpUH/HA3im6BCTo1S0HJO1BnySq6pKXES0DXXZ2idw/EVJI0zRwDgKAYs4S1aul9VTUQmKEvT8cqDAqe7ZQ/QuRWyMUaeYDBDMquyWBjXXfXCkkgpP57BdPJ3EWuUwag=="
 }

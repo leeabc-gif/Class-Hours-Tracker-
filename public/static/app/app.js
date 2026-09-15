@@ -614,7 +614,7 @@
     dashboard: { t: '首页仪表盘', a: '个人课时工作台' },
     'admin-dashboard': { t: '全校数据看板', a: '管理员' },
     'admin-users': { t: '用户管理', a: '管理员' },
-    'admin-students': { t: '学生管理', a: '管理员' },
+    'admin-students': { t: '学生学情', a: '学生档案 · 班级总览' },
     'admin-meta': { t: '基础配置', a: '管理员' },
     'admin-aihub': { t: 'AI 中转管理', a: '渠道 · 模型倍率 · 额度分配' },
     'admin-update': { t: '系统更新', a: '在线升级 · 备份 · 回滚' },
@@ -636,8 +636,8 @@
   // =====================================================================
   App.goPage = function (p) {
     if (!App.user) return;
-    // 权限守卫：教师不能进入管理页
-    if (App.user.role !== 'admin' && p.indexOf('admin-') === 0) p = 'dashboard';
+    // 权限守卫：教师只放行学生学情页，其他管理页仍不可进入
+    if (App.user.role !== 'admin' && p.indexOf('admin-') === 0 && p !== 'admin-students') p = 'dashboard';
     App.page = p;
     $$('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === p));
     const meta = PAGE_META[p] || { t: p, a: '' };
@@ -2387,10 +2387,10 @@
       max_tokens: pgState.max_tokens || 0,
     };
 
-    let ok = false;
+    let streamResult = { ok: false, partial: false };
     let finalErr = '';
     try {
-      ok = await pgSendStream(payload, assistantIdx, function (stat) {
+      streamResult = await pgSendStream(payload, assistantIdx, function (stat) {
         assistantMsg.stat = stat;
         // 渲染一次底部统计
         pgRenderMsgs();
@@ -2399,14 +2399,24 @@
       });
     } catch (e) {
       finalErr = '网络异常：' + (e && e.message ? e.message : e);
+      // 即使读取器抛出未预期异常，也不能把已显示的正文当作零输出再次计费。
+      streamResult = { ok: false, partial: !!assistantMsg.content };
     }
 
     pgState.busy = false;
     if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-send-fill"></i>'; }
     if (gone('pgMsgs')) return;
 
-    if (!ok) {
-      // 流式失败：尝试 fallback 到非流式接口
+    if (!streamResult.ok) {
+      // 只有完全没有正文时才允许回退，避免上游已计费/已输出后重复调用。
+      if (streamResult.partial) {
+        assistantMsg.role = 'error';
+        assistantMsg.content = (assistantMsg.content ? assistantMsg.content + '\n\n' : '') + (finalErr || '流式响应中断');
+        assistantMsg._live = false;
+        pgRenderMsgs();
+        toast(finalErr || '流式响应中断', 'err');
+        return;
+      }
       let fb = null;
       try {
         fb = await POST('/api/playground/chat', payload);
@@ -2440,7 +2450,7 @@
 
   /**
    * 用 fetch + ReadableStream 读 SSE。
-   * 返回 true 表示服务端 OK，false 表示失败（可能为流式不可用）。
+   * 返回 {ok, partial}；partial=true 表示已经收到部分正文，禁止重复回退调用。
    */
   async function pgSendStream(payload, assistantIdx, onFinalStat, onError) {
     const host = $('#pgMsgs');
@@ -2456,16 +2466,16 @@
       });
     } catch (e) {
       onError('网络异常：' + (e && e.message ? e.message : e));
-      return false;
+      return { ok: false, partial: false };
     }
     if (!resp.ok) {
       // 流式接口本身出错（路由不存在 / 服务器拒绝）→ 回退到非流式
       onError('流式接口 HTTP ' + resp.status);
-      return false;
+      return { ok: false, partial: false };
     }
     if (!resp.body || typeof resp.body.getReader !== 'function') {
       onError('当前浏览器不支持 ReadableStream');
-      return false;
+      return { ok: false, partial: false };
     }
 
     const reader = resp.body.getReader();
@@ -2497,6 +2507,8 @@
         break;
       }
       buf += decoder.decode(chunk, { stream: true });
+      // 统一 CRLF，兼容不同 Web 服务器的 SSE 换行格式。
+      buf = buf.replace(/\r\n/g, '\n');
       // 按 \n\n 拆事件
       let idx;
       while ((idx = buf.indexOf('\n\n')) >= 0) {
@@ -2507,7 +2519,12 @@
         if (!dataLine) continue;
         if (dataLine === '[DONE]') { buf = ''; break; }
         let parsed = null;
-        try { parsed = JSON.parse(dataLine); } catch (e) { continue; }
+        try {
+          parsed = JSON.parse(dataLine);
+        } catch (e) {
+          lastErrMsg = '流式数据格式错误';
+          continue;
+        }
         if (parsed && parsed.error) {
           lastErrMsg = (parsed.error && parsed.error.message) || '上游错误';
           continue;
@@ -2536,9 +2553,9 @@
     if (isFirstChunk) {
       // 一片内容都没收到 → 当作流式失败
       onError('未收到流式数据');
-      return false;
+      return { ok: false, partial: false };
     }
-    return !lastErrMsg;
+    return { ok: !lastErrMsg, partial: !!acc };
   }
 
   // -------- 通知公告 --------
@@ -3203,9 +3220,11 @@
 
   // -------- 学生管理（管理员 + 教师）--------
   let studentCache = { list: [], total: 0, page: 1 };
+  let classLearningState = { data: null, loading: false };
 
   ROUTERS['admin-students'] = function(host){
     const isAdmin = App.user && App.user.role === 'admin';
+    classLearningState = { data: null, loading: false };
     host.innerHTML = `<div class="card">
       <div class="card-h"><i class="bi bi-people-fill text-primary"></i><span class="tt">学生管理</span>
         <div class="flex-grow-1"></div>
@@ -3217,6 +3236,17 @@
         ${isAdmin ? '<button class="btn btn-outline-primary btn-sm ms-1" onclick="KS.importStudents()"><i class="bi bi-upload me-1"></i>批量导入</button>' : ''}
       </div>
       <div class="card-b">
+        <div class="border rounded p-3 mb-3" id="classLearningPanel">
+          <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+            <div><div class="fw-semibold">班级学情总览</div><div class="small text-muted">按班级查看出勤、成绩、风险学生和 AI 答疑活跃度</div></div>
+            <div class="flex-grow-1"></div>
+            <select id="stuOverviewClass" class="form-select form-select-sm" style="width:auto;min-width:180px">
+              <option value="0">请选择班级</option>
+            </select>
+            <button class="btn btn-outline-primary btn-sm" id="classOverviewBtn" onclick="KS.loadClassOverview()"><i class="bi bi-bar-chart-line me-1"></i>查看总览</button>
+          </div>
+          <div id="classLearningBody" class="small text-muted">请选择班级后查看总览</div>
+        </div>
         <div class="d-flex gap-2 mb-2 flex-wrap align-items-center">
           <input id="stuKeyword" class="form-control form-control-sm" style="width:200px" placeholder="搜索学号/姓名" onkeydown="if(event.key==='Enter')KS.loadStudents()">
           <select id="stuClassFilter" class="form-select form-select-sm" style="width:auto" onchange="KS.loadStudents()">
@@ -3278,15 +3308,15 @@
       const genderMap = { '0':'—','1':'男','2':'女' };
       const crudOps = isAdmin ? (
         '<button class="btn btn-sm btn-outline-primary me-1" onclick="KS.studentForm('+s.id+')" title="编辑"><i class="bi bi-pencil"></i></button>'
-        + (s.status==='2' ? '<button class="btn btn-sm btn-outline-success me-1" onclick="KS.approveStudent('+s.id+')">通过</button>' : '')
-        + '<button class="btn btn-sm btn-outline-'+ (s.status==='1'?'danger':'success') +' me-1" onclick="KS.studentToggle('+s.id+','+(s.status==='1'?0:1)+')">'
-        + (s.status==='1'?'禁用':'启用')+'</button>'
+        + (Number(s.status)===2 ? '<button class="btn btn-sm btn-outline-success me-1" onclick="KS.approveStudent('+s.id+')">通过</button>' : '')
+        + '<button class="btn btn-sm btn-outline-'+ (Number(s.status)===1?'danger':'success') +' me-1" onclick="KS.studentToggle('+s.id+','+(Number(s.status)===1?0:1)+')">'
+        + (Number(s.status)===1?'禁用':'启用')+'</button>'
         + '<button class="btn btn-sm btn-outline-danger" onclick="KS.studentDelete('+s.id+')" title="删除"><i class="bi bi-trash"></i></button>'
       ) : '';
       const commonOps = '<button class="btn btn-sm btn-outline-info me-1" onclick="KS.learningProfile('+s.id+')" title="学情摘要"><i class="bi bi-graph-up"></i></button>'
         + '<button class="btn btn-sm btn-outline-success me-1" onclick="KS.recordAtt('+s.id+')" title="记出勤"><i class="bi bi-calendar-check"></i></button>'
         + '<button class="btn btn-sm btn-outline-warning me-1" onclick="KS.recordScr('+s.id+')" title="记成绩"><i class="bi bi-trophy"></i></button>';
-      const ops = crudOps || commonOps || '<span class="text-muted small">—</span>';
+      const ops = (crudOps + commonOps) || '<span class="text-muted small">—</span>';
       return '<tr><td>'+esc(s.sno)+'</td><td>'+esc(s.name)+'</td><td>'+esc(s.class_name)+'</td>'
         + '<td>'+genderMap[s.gender]+'</td><td>'+s.year+'</td>'
         + '<td>'+statusMap[s.status]+'</td><td>'+sourceMap[s.source]+'</td>'
@@ -3304,6 +3334,79 @@
       $('#stuPagination').innerHTML=pgHtml;
     } else {
       $('#stuPagination').innerHTML='';
+    }
+  };
+
+  function classRiskText(codes){
+    const labels = { attendance_low: '出勤率低于 80%', score_low: '成绩均分低于 60' };
+    return (codes||[]).map(function(code){ return labels[code] || code; }).join('、');
+  }
+
+  function renderClassOverview(data){
+    const body = $('#classLearningBody');
+    if(!body) return;
+    const d = data || {}, st = d.students || {}, a = d.attendance || {}, sc = d.scores || {}, ai = d.ai || {};
+    const rate = a.rate === null || a.rate === undefined ? '暂无' : Math.round(a.rate*100)+'%';
+    const scoreAvg = sc.average === null || sc.average === undefined ? '暂无' : sc.average;
+    const riskRows = (d.risk_students||[]).map(function(s){
+      return '<tr><td>'+esc(s.sno||'')+'</td><td>'+esc(s.name||'')+'</td>'
+        + '<td>'+(s.attendance_rate===null||s.attendance_rate===undefined?'暂无':Math.round(s.attendance_rate*100)+'%')+'</td>'
+        + '<td>'+(s.score_average===null||s.score_average===undefined?'暂无':esc(String(s.score_average)))+'</td>'
+        + '<td>'+esc(classRiskText(s.risk_codes))+'</td>'
+        + '<td><button class="btn btn-sm btn-outline-info" onclick="KS.learningProfile('+s.id+')" title="查看学生学情"><i class="bi bi-graph-up"></i></button></td></tr>';
+    }).join('');
+    const dist = sc.distribution || {};
+    const distRows = ['0-59','60-69','70-79','80-89','90-100'].map(function(k){
+      return '<tr><td>'+k+'</td><td>'+Number(dist[k]||0)+'</td></tr>';
+    }).join('');
+    body.innerHTML = '<div class="row g-2 mb-3">'
+      + '<div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">学生人数</div><b>'+Number(st.total||0)+'</b><span class="small text-muted">（正常 '+Number(st.active||0)+'）</span></div></div>'
+      + '<div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">班级出勤率</div><b>'+rate+'</b><div class="small text-muted">共 '+Number(a.total||0)+' 条记录</div></div></div>'
+      + '<div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">成绩均分</div><b>'+scoreAvg+'</b><div class="small text-muted">有效成绩 '+Number(sc.graded_count||0)+' 条</div></div></div>'
+      + '<div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">风险学生</div><b class="'+(d.risk_students&&d.risk_students.length?'text-danger':'text-success')+'">'+Number((d.risk_students||[]).length)+'</b><div class="small text-muted">AI提问 '+Number(ai.message_count||0)+' 条</div></div></div>'
+      + '</div>'
+      + '<div class="row g-3 mb-3">'
+      + '<div class="col-12 col-lg-6"><div class="small fw-semibold mb-1">出勤状态</div><div class="small text-muted">出勤 '+Number(a.present||0)+' · 缺勤 '+Number(a.absent||0)+' · 请假 '+Number(a.leave||0)+' · 迟到 '+Number(a.late||0)+' · 早退 '+Number(a.early||0)+'</div><div class="small text-muted">有出勤记录学生 '+Number(a.students_with_records||0)+' 人，AI活跃学生 '+Number(ai.active_students||0)+' 人</div></div>'
+      + '<div class="col-12 col-lg-6"><div class="small fw-semibold mb-1">成绩分布</div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>分数段</th><th>人数</th></tr></thead><tbody>'+distRows+'</tbody></table></div></div>'
+      + '</div>'
+      + '<div class="d-flex align-items-center mb-1"><span class="small fw-semibold">风险学生</span><span class="small text-muted ms-2">'+((d.risk_students||[]).length?'按风险项数量排序':'当前没有命中风险规则')+'</span><div class="flex-grow-1"></div><button class="btn btn-sm btn-outline-primary" onclick="KS.analyzeClassLearning('+Number(d.class&&d.class.id||0)+')"><i class="bi bi-lightbulb me-1"></i>生成班级 AI 建议</button></div>'
+      + '<div class="table-responsive"><table class="table table-sm align-middle mb-2"><thead><tr><th>学号</th><th>姓名</th><th>出勤率</th><th>成绩均分</th><th>风险项</th><th>操作</th></tr></thead><tbody>'
+      + (riskRows || '<tr><td colspan="6" class="text-center text-muted py-2">暂无风险学生</td></tr>')
+      + '</tbody></table></div><div id="classLearningAiResult"></div>';
+  }
+
+  KS.loadClassOverview = async function(){
+    const select = $('#stuOverviewClass'), body = $('#classLearningBody'), btn = $('#classOverviewBtn');
+    if(!select || !body || !btn) return;
+    const classId = parseInt(select.value, 10) || 0;
+    if(!classId){ body.innerHTML = '<span class="text-muted">请选择班级后查看总览</span>'; return; }
+    classLearningState.loading = true;
+    btn.disabled = true;
+    body.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>正在加载班级学情…';
+    try {
+      const res = await GET('/api/studentadmin/classLearningOverview', {class_id:classId});
+      if(res.code!==0){ body.innerHTML = '<div class="alert alert-danger small mb-0">'+esc(res.msg||'班级学情加载失败')+'</div>'; return; }
+      classLearningState.data = res.data || null;
+      renderClassOverview(classLearningState.data);
+    } catch(e) {
+      body.innerHTML = '<div class="alert alert-danger small mb-0">班级学情加载失败，请稍后重试</div>';
+    } finally {
+      classLearningState.loading = false;
+      btn.disabled = false;
+    }
+  };
+
+  KS.analyzeClassLearning = async function(classId){
+    const box = $('#classLearningAiResult');
+    if(!box || !classId) return;
+    box.innerHTML = '<div class="small text-muted"><span class="spinner-border spinner-border-sm me-1"></span>正在生成班级建议…</div>';
+    try {
+      const res = await POST('/api/studentadmin/analyzeClassLearning', {class_id:classId});
+      if(res.code!==0){ box.innerHTML = '<div class="alert alert-danger small mb-0">'+esc(res.msg||'分析失败')+'</div>'; return; }
+      const d = res.data || {};
+      box.innerHTML = '<div class="border rounded p-2 bg-light"><div class="small text-muted mb-1">班级 AI 教学建议'+(d.model?' · '+esc(d.model):'')+'</div><div class="small" style="white-space:pre-wrap">'+esc(d.content||'暂无建议')+'</div></div>';
+    } catch(e) {
+      box.innerHTML = '<div class="alert alert-danger small mb-0">班级学情分析失败，请稍后重试</div>';
     }
   };
 
@@ -3364,8 +3467,7 @@
 
   // ===== 学情摘要 =====
   KS.learningProfile = async function(id){
-    const s = studentCache.list.find(function(x){return x.id===id;});
-    if(!s){ toast('找不到学生','warn'); return; }
+    const s = studentCache.list.find(function(x){return x.id===id;}) || {id:id,name:'学生'};
     const res = await GET('/api/studentadmin/learningProfile', {student_id:id});
     if(res.code!==0){ toast(res.msg || '学情加载失败','err'); return; }
     const d = res.data || {}, a = d.attendance || {}, sc = d.scores || {}, ai = d.ai || {};
@@ -3539,7 +3641,7 @@
       </div>
       <div class="mb-2"><label class="form-label">班级</label><select id="stClass" class="form-select">${classHtml}</select></div>
       <div class="mb-2"><label class="form-label">密码${id?'（留空不修改）':''}</label><input id="stPwd" type="password" class="form-control" placeholder="${id?'留空保持原密码':'默认与学号相同'}"></div>
-      <div class="form-check"><input class="form-check-input" type="checkbox" id="stStatus" ${!s||s.status==='1'?'checked':''}><label class="form-check-label">启用</label></div>
+      <div class="form-check"><input class="form-check-input" type="checkbox" id="stStatus" ${!s||Number(s.status)===1?'checked':''}><label class="form-check-label">启用</label></div>
     `, [{t:'保存',c:'btn-primary',act:saveStudent}]);
   };
 
@@ -3576,12 +3678,21 @@
   };
 
   async function loadClassSelect(){
-    const res = await POST('/api/admin/classes');
+    const res = await GET('/api/studentadmin/classOptions');
     if(res.code!==0) return;
+    const classes = res.data || [];
     const sel = $('#stuClassFilter');
-    const cur = sel.value;
-    sel.innerHTML = '<option value="0">全部班级</option>'
-      + (res.data||[]).map(function(c){return '<option value="'+c.id+'"'+(c.id==parseInt(cur)?' selected':'')+'>'+esc(c.name)+'</option>';}).join('');
+    if(sel){
+      const cur = sel.value;
+      sel.innerHTML = '<option value="0">全部班级</option>'
+        + classes.map(function(c){return '<option value="'+c.id+'"'+(c.id==parseInt(cur)?' selected':'')+'>'+esc(c.name)+'</option>';}).join('');
+    }
+    const overviewSel = $('#stuOverviewClass');
+    if(overviewSel){
+      const curOverview = overviewSel.value;
+      overviewSel.innerHTML = '<option value="0">请选择班级</option>'
+        + classes.map(function(c){return '<option value="'+c.id+'"'+(c.id==parseInt(curOverview)?' selected':'')+'>'+esc(c.name)+(c.year?'（'+c.year+'级）':'')+'</option>';}).join('');
+    }
   }
 
   // -------- 基础配置（院系/课程/学期/系统参数） --------

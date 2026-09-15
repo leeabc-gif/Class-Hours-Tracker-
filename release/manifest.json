@@ -1,19 +1,19 @@
 {
-    "latest_version": "1.2.1",
+    "latest_version": "1.2.2",
     "min_php": "7.4",
-    "published_at": "2026-09-13T09:00:00+00:00",
-    "changelog": "- 新增教师侧学生学情摘要与 AI 教学建议入口。\n- 加固学生注册并发重复学号处理、教师出勤班级权限校验。\n- 学生 AI 流式答疑、额度展示与历史会话体验修复。\n- 本版本为维护版升级，数据库仅同步版本号，不重复执行学生模块建表迁移。\n- 最低可升级版本：1.1.3。",
+    "published_at": "2026-09-15T04:31:24+00:00",
+    "changelog": "### 修复\n- 修复学生端 AI 答疑页在 375px 等移动视口下，固定底部导航遮挡输入栏发送按钮的问题；AI 页面进入后隐藏全局底部导航，保留页面自身返回和历史会话入口。\n- 补充学生端真实 SSE 答疑回归夹具，验证流式正文、学生额度扣减和历史会话恢复链路。\n- 完成教师/管理员学生学情页面的班级权限、空班、风险学生详情和班级 AI 建议浏览器回归。\n\n### 数据库\n- 新增 `20260912_v122_version_sync.sql`，仅同步 `ks_setting.app_version`，不含 DDL；已完成 v1.2.0 学生模块建表的站点可直接升级。\n\n### 兼容性\n- 最低可升级版本：1.1.3。",
     "files": [
         {
-            "name": "keshi-1.2.1.zip",
-            "url": "https://cnb.cool/bmayan/class-hours-tracker/-/releases/download/v1.2.1/keshi-1.2.1.zip",
-            "sha256": "1457344bb55b9fcacf126e4bea2457d452f0d06c572b2ac389d9190bef45661e",
-            "version": "1.2.1",
-            "size": 835844
+            "name": "keshi-1.2.2.zip",
+            "url": "https://cnb.cool/bmayan/class-hours-tracker/-/releases/download/v1.2.2/keshi-1.2.2.zip",
+            "sha256": "2919aef5d8e695c9d6b04c19741aa1bf7807fa947c4834e4ca68b5ab0abde7c5",
+            "version": "1.2.2",
+            "size": 841827
         }
     ],
     "requires": {
         "from_version": "1.1.3"
     },
-    "signature": "nxu6Gh9CslcwFy2spU3IrStHZoTXYWMuDsGgRVmNkKnJUBf4FZFDZm2V6/TP3wlV8eqWGrCl+VtR1eUFVnBna6wXn2ybfY5wl/RCjuIE72ly8PEgpvZfcqvk+pwEgU6hIb30+/A5yCwElzbI9WN5IXM3Y7dxSBSpfCYuM1QtsDTA+kVAXAWxDmQ+F5rb0ypYQRw5fP9oS4Eq1rIfEd+RySagrCNPYLziGsBS/kHeNFYp08KhGAeXLbwa1mVorGr9Yx8KfLTcyRRQiH3NT3zXTzSJoy0iDLzCSW+ptFW3pyF3vo7iMHPmlK3tgnPhKSQRQEVZCqyH+uCuUbyEloaBHw=="
+    "signature": "rqEVJUPYTpSb0pYsbCoRemtImqLtzj91fIB5sIRcNFGpHShsFETfSjG6rsSfJywLJu8XdsMz5/3b+iJ21y5trrZ6zJX1wqKPy7CaE/FfvMXjWrZFQgR+2tEywxW0tLhPz+ZLdM6wZr7+Sco7ZrpfjM1mhkru8/6D0XScPVWBkc31UAgQi7ahL+73xHnlhLHFNuP6kfk9Y4PLPRmr+vhj7qvlXxn2ztaRetS30eMfaxaXrIVEtm8x4Mw/eJdoY5CYruy5oeUvsE5Mmred2WnyBe3uoWyW/77fZWNBU8I/+M5SiWa5FYUx/MtXRgBh8ZzUmC/tu8OWeomomtosgsBv/g=="
 }

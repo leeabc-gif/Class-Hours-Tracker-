@@ -284,7 +284,7 @@ class Studentportal extends StudentBase
         $created = time();
         $sseWrite = function ($payload) {
             echo 'data: ' . json_encode($payload, JSON_UNESCAPED_UNICODE) . "\n\n";
-            @ob_flush(); @flush();
+            $this->flushSse();
         };
 
         // 首包
@@ -312,7 +312,7 @@ class Studentportal extends StudentBase
             $res = AiProxy::streamChat($opt, function ($delta) use ($sseWrite, $respId, $created, &$fullReply, &$usedModel, &$usedPoints) {
             if (strpos($delta, '__SWITCH__') === 0) {
                 echo ": switch-channel " . substr($delta, 10) . "\n\n";
-                @ob_flush(); @flush();
+                $this->flushSse();
                 return;
             }
             if (strpos($delta, '__USAGE__') === 0) {
@@ -333,7 +333,7 @@ class Studentportal extends StudentBase
             $errorMsg = is_array($res) && !empty($res['msg']) ? $res['msg'] : 'AI 调用失败';
             $sseWrite(['error' => $errorMsg]);
             echo "data: [DONE]\n\n";
-            @ob_flush(); @flush();
+            $this->flushSse();
             return;
         }
 
@@ -382,7 +382,7 @@ class Studentportal extends StudentBase
 
         // 最后发 [DONE]（兼容 OpenAI 格式）
         echo "data: [DONE]\n\n";
-        @ob_flush(); @flush();
+        $this->flushSse();
         } catch (\Throwable $e) {
             $this->sseError('AI 流式调用异常，请稍后重试');
             return;
@@ -402,7 +402,15 @@ class Studentportal extends StudentBase
         @http_response_code(200);
         echo 'data: ' . json_encode(['error' => $msg], JSON_UNESCAPED_UNICODE) . "\n\n";
         echo "data: [DONE]\n\n";
-        @ob_flush(); @flush();
+        $this->flushSse();
+    }
+
+    /**
+     * The controller closes PHP output buffers before streaming; only flush the server output.
+     */
+    private function flushSse()
+    {
+        @flush();
     }
 
     /**

@@ -70,6 +70,12 @@ class StudentAiQuota extends Model
 
         $affected = self::where('id', (int)$this->id)
             ->where('balance', '>=', $points)
+            ->whereRaw(
+                '(`daily_limit` <= 0 OR `daily_used` + ? <= `daily_limit`)
+                 AND (`weekly_limit` <= 0 OR `weekly_used` + ? <= `weekly_limit`)
+                 AND (`monthly_limit` <= 0 OR `monthly_used` + ? <= `monthly_limit`)',
+                [$points, $points, $points]
+            )
             ->update([
                 'balance'      => ['dec', $points],
                 'total_used'   => ['inc', $points],

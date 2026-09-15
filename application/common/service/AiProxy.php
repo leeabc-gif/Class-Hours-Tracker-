@@ -38,8 +38,8 @@ class AiProxy
      */
     public static function chat(array $opt)
     {
-        $ownerType = in_array((string)(isset($opt['owner_type']) ? $opt['owner_type'] : 'teacher'), ['teacher','student'], true)
-            ? (string)$opt['owner_type'] : 'teacher';
+        $ownerType = isset($opt['owner_type']) ? (string)$opt['owner_type'] : 'teacher';
+        if (!in_array($ownerType, ['teacher', 'student'], true)) $ownerType = 'teacher';
         $isStudent = ($ownerType === 'student');
         $teacherId = intval(isset($opt['teacher_id']) ? $opt['teacher_id'] : 0);
         $studentId = intval(isset($opt['student_id']) ? $opt['student_id'] : 0);
@@ -60,6 +60,7 @@ class AiProxy
         $ip          = (string)(isset($opt['ip']) ? $opt['ip'] : '');
 
         // ---- 1) 额度粗检 ----
+        $quotaUnlimited = false;
         if ($isStudent) {
             $pre = StudentQuotaService::preCheck($studentId);
             if (!$pre['ok']) {
@@ -71,6 +72,7 @@ class AiProxy
             if (!$pre['ok']) {
                 return array_merge(self::fail($pre['msg']), ['quota' => QuotaService::summary($teacherId)]);
             }
+            $quotaUnlimited = !empty($pre['unlimited']);
         }
 
         // ---- 2) 决定模型 ----
@@ -84,8 +86,15 @@ class AiProxy
         $channels = self::pickChannels($model);
 
         // ---- 4) 无渠道则回退旧版单条配置 ----
+        // 学生额度与教师额度隔离，不能进入只支持教师身份的旧版回退路径。
         if (!$channels) {
-            return self::legacyChat($teacherId, $model, $messages, $temperature, $tokenId, $source, $ip);
+            if ($isStudent) {
+                return array_merge(
+                    self::fail('尚未配置任何 AI 渠道，请联系管理员先在「AI 渠道」中添加'),
+                    ['quota' => StudentQuotaService::summary($studentId)]
+                );
+            }
+            return self::legacyChat($teacherId, $model, $messages, $temperature, $tokenId, $source, $ip, $quotaUnlimited);
         }
 
         // ---- 5) 逐个渠道尝试 ----
@@ -112,6 +121,8 @@ class AiProxy
                 // 结算（原子扣减）
                 if ($isStudent) {
                     $settle = StudentQuotaService::settle($studentId, $points);
+                } elseif ($quotaUnlimited) {
+                    $settle = ['ok' => true, 'quota' => null];
                 } else {
                     $settle = QuotaService::settle($teacherId, $points);
                 }
@@ -131,10 +142,21 @@ class AiProxy
                     'source'            => $source,
                     'ip'                => $ip,
                 ];
-                AiUsageLog::record($logData);
-
                 $quotaSummary = $isStudent ? StudentQuotaService::summary($studentId) : QuotaService::summary($teacherId);
 
+                if (!$settle['ok']) {
+                    $logData['status'] = 0;
+                    $logData['error_msg'] = 'AI 调用成功但额度结算失败';
+                    AiUsageLog::record($logData);
+                    return array_merge(
+                        self::fail('AI 调用成功，但额度结算失败，请稍后重试'),
+                        ['content' => $res['content'], 'model' => $model, 'usage' => $res['usage'],
+                         'points' => $points, 'channel_id' => (int)$ch->id,
+                         'latency_ms' => $res['latency_ms'], 'settled' => 0, 'quota' => $quotaSummary]
+                    );
+                }
+
+                AiUsageLog::record($logData);
                 return [
                     'ok'         => true,
                     'msg'        => '',
@@ -144,7 +166,7 @@ class AiProxy
                     'points'     => $points,
                     'channel_id' => (int)$ch->id,
                     'latency_ms' => $res['latency_ms'],
-                    'settled'    => $settle['ok'] ? 1 : 0,
+                    'settled'    => 1,
                     'quota'      => $quotaSummary,
                 ];
             }
@@ -175,7 +197,7 @@ class AiProxy
      * 回退通道：沿用旧版单条配置（ks_setting.ai_* 或教师自定义 ks_teacher_ai_config）
      * 这样未配置渠道的老站点升级后依然可用，且同样计费、同样记日志。
      */
-    private static function legacyChat($teacherId, $model, array $messages, $temperature, $tokenId, $source, $ip)
+    private static function legacyChat($teacherId, $model, array $messages, $temperature, $tokenId, $source, $ip, $quotaUnlimited = false)
     {
         $cfg = AiConfig::effective($teacherId);
         if (!AiConfig::isConfigured($cfg)) {
@@ -234,9 +256,11 @@ class AiProxy
 
         $usage = self::extractUsage($json);
         $points = AiModel::cost($model, $usage['prompt_tokens'], $usage['completion_tokens']);
-        $settle = QuotaService::settle($teacherId, $points);
-
-        AiUsageLog::record([
+        $settle = $quotaUnlimited
+            ? ['ok' => true, 'quota' => null]
+            : QuotaService::settle($teacherId, $points);
+        $quotaSummary = QuotaService::summary($teacherId);
+        $logData = [
             'teacher_id'        => $teacherId,
             'token_id'          => $tokenId,
             'channel_id'        => 0,
@@ -248,8 +272,20 @@ class AiProxy
             'status'            => 1,
             'source'            => $source,
             'ip'                => $ip,
-        ]);
+        ];
+        if (!$settle['ok']) {
+            $logData['status'] = 0;
+            $logData['error_msg'] = 'AI 调用成功但额度结算失败';
+            AiUsageLog::record($logData);
+            return array_merge(
+                self::fail('AI 调用成功，但额度结算失败，请稍后重试'),
+                ['content' => $content, 'model' => $model, 'usage' => $usage,
+                 'points' => $points, 'channel_id' => 0, 'latency_ms' => $latency,
+                 'settled' => 0, 'quota' => $quotaSummary]
+            );
+        }
 
+        AiUsageLog::record($logData);
         return [
             'ok'         => true,
             'msg'        => '',
@@ -259,8 +295,8 @@ class AiProxy
             'points'     => $points,
             'channel_id' => 0,
             'latency_ms' => $latency,
-            'settled'    => $settle['ok'] ? 1 : 0,
-            'quota'      => QuotaService::summary($teacherId),
+            'settled'    => 1,
+            'quota'      => $quotaSummary,
         ];
     }
 
@@ -282,8 +318,8 @@ class AiProxy
      *
      * @param array  $opt     同 chat()
      * @param callable $onDelta function(string $delta): void  每收到一段正文调用一次
-     * @return array  {ok, msg, model, content, usage, points, channel_id, latency_ms, settled, quota}
-     *                $content 是 $onDelta 累积拼出的完整正文（用于日志/回退渲染）
+     * @return array  {ok, msg, model, content, usage, points, channel_id, latency_ms, settled, partial, quota}
+     *                $content 是 $onDelta 累积拼出的正文；partial=1 表示已输出但未完成，调用方不得重试
      */
     public static function streamChat(array $opt, $onDelta)
     {
@@ -291,8 +327,8 @@ class AiProxy
             return self::fail('流式回调不可调用');
         }
 
-        $ownerType = in_array((string)(isset($opt['owner_type']) ? $opt['owner_type'] : 'teacher'), ['teacher','student'], true)
-            ? (string)$opt['owner_type'] : 'teacher';
+        $ownerType = isset($opt['owner_type']) ? (string)$opt['owner_type'] : 'teacher';
+        if (!in_array($ownerType, ['teacher', 'student'], true)) $ownerType = 'teacher';
         $isStudent = ($ownerType === 'student');
         $teacherId = intval(isset($opt['teacher_id']) ? $opt['teacher_id'] : 0);
         $studentId = intval(isset($opt['student_id']) ? $opt['student_id'] : 0);
@@ -309,6 +345,7 @@ class AiProxy
         $ip          = (string)(isset($opt['ip']) ? $opt['ip'] : '');
 
         // 额度粗检
+        $quotaUnlimited = false;
         if ($isStudent) {
             $pre = StudentQuotaService::preCheck($studentId);
             if (!$pre['ok']) {
@@ -320,6 +357,7 @@ class AiProxy
             if (!$pre['ok']) {
                 return array_merge(self::fail($pre['msg']), ['quota' => QuotaService::summary($teacherId)]);
             }
+            $quotaUnlimited = !empty($pre['unlimited']);
         }
 
         $model = trim((string)(isset($opt['model']) ? $opt['model'] : ''));
@@ -330,7 +368,11 @@ class AiProxy
 
         $channels = self::pickChannels($model);
         if (!$channels) {
-            return self::fail('尚未配置任何 AI 渠道，请联系管理员先在「AI 渠道」中添加');
+            $quota = $isStudent ? StudentQuotaService::summary($studentId) : QuotaService::summary($teacherId);
+            return array_merge(
+                self::fail('尚未配置任何 AI 渠道，请联系管理员先在「AI 渠道」中添加'),
+                ['quota' => $quota]
+            );
         }
 
         $tried = 0;
@@ -357,6 +399,8 @@ class AiProxy
 
                 if ($isStudent) {
                     $settle = StudentQuotaService::settle($studentId, $points);
+                } elseif ($quotaUnlimited) {
+                    $settle = ['ok' => true, 'quota' => null];
                 } else {
                     $settle = QuotaService::settle($teacherId, $points);
                 }
@@ -376,10 +420,21 @@ class AiProxy
                     'source'            => $source,
                     'ip'                => $ip,
                 ];
-                AiUsageLog::record($logData);
-
                 $quotaSummary = $isStudent ? StudentQuotaService::summary($studentId) : QuotaService::summary($teacherId);
+                if (!$settle['ok']) {
+                    $logData['status'] = 0;
+                    $logData['error_msg'] = 'AI 调用成功但额度结算失败';
+                    AiUsageLog::record($logData);
+                    return array_merge(
+                        self::fail('AI 调用成功，但额度结算失败，请稍后重试'),
+                        ['content' => $res['content'], 'model' => $model,
+                         'usage' => $res['usage'], 'points' => $points,
+                         'channel_id' => (int)$ch->id, 'latency_ms' => $res['latency_ms'],
+                         'settled' => 0, 'partial' => 1, 'quota' => $quotaSummary]
+                    );
+                }
 
+                AiUsageLog::record($logData);
                 return [
                     'ok'         => true,
                     'msg'        => '',
@@ -389,12 +444,32 @@ class AiProxy
                     'points'     => $points,
                     'channel_id' => (int)$ch->id,
                     'latency_ms' => $res['latency_ms'],
-                    'settled'    => $settle['ok'] ? 1 : 0,
+                    'settled'    => 1,
                     'quota'      => $quotaSummary,
                 ];
             }
             $lastErr = $res['msg'];
             $ch->markFail($res['msg']);
+            if (!empty($res['partial'])) {
+                AiUsageLog::record([
+                    'teacher_id' => $teacherId,
+                    'owner_type' => $ownerType,
+                    'student_id' => $studentId,
+                    'token_id'   => $tokenId,
+                    'channel_id' => (int)$ch->id,
+                    'model'      => $model,
+                    'status'     => 0,
+                    'error_msg'  => $lastErr,
+                    'source'     => $source,
+                    'ip'         => $ip,
+                ]);
+                $partialQuota = $isStudent ? StudentQuotaService::summary($studentId) : QuotaService::summary($teacherId);
+                return array_merge(
+                    self::fail('AI 流式调用中断：' . $lastErr),
+                    ['content' => $res['content'], 'model' => $model, 'partial' => 1,
+                     'quota' => $partialQuota]
+                );
+            }
         }
 
         $logData = [
@@ -434,6 +509,8 @@ class AiProxy
         $httpCode = 0;
         $curlErr = '';
         $firstByteOk = false;
+        $streamDone = false;
+        $parseError = '';
 
         $chh = curl_init($url);
         curl_setopt_array($chh, [
@@ -450,14 +527,14 @@ class AiProxy
             CURLOPT_MAXREDIRS      => 3,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_HEADER         => false,
-            CURLOPT_WRITEFUNCTION  => function ($ch, $chunk) use (&$buffer, &$accumulated, &$usage, &$firstByteOk, $onDelta) {
+            CURLOPT_WRITEFUNCTION  => function ($ch, $chunk) use (&$buffer, &$accumulated, &$usage, &$firstByteOk, &$streamDone, &$parseError, $onDelta) {
                 $firstByteOk = true;
-                $buffer .= $chunk;
-                // 按 \n\n 切事件
+                $buffer .= str_replace("\r\n", "\n", $chunk);
+                // 统一换行后按空行切事件，兼容 Windows/代理的 CRLF SSE。
                 while (($pos = strpos($buffer, "\n\n")) !== false) {
                     $event = substr($buffer, 0, $pos);
                     $buffer = substr($buffer, $pos + 2);
-                    self::parseSseEvent($event, $accumulated, $usage, $onDelta);
+                    self::parseSseEvent($event, $accumulated, $usage, $onDelta, $streamDone, $parseError);
                 }
                 return strlen($chunk);
             },
@@ -470,22 +547,34 @@ class AiProxy
         $latency = (int)round((microtime(true) - $start) * 1000);
 
         if ($curlErr !== '') {
-            return ['ok' => false, 'msg' => '网络错误：' . $curlErr, 'latency_ms' => $latency, 'content' => '', 'usage' => $usage];
+            return ['ok' => false, 'msg' => '网络错误：' . $curlErr, 'latency_ms' => $latency,
+                'content' => $accumulated, 'partial' => $accumulated !== '', 'usage' => $usage];
         }
         if ($httpCode < 200 || $httpCode >= 300) {
             // 失败时把已读到的 body 当错误信息（OpenAI 流式失败会一次性回 JSON）
             $snippet = is_string($resp) ? mb_substr(trim($resp), 0, 200) : '';
-            return ['ok' => false, 'msg' => 'HTTP ' . $httpCode . ($snippet ? '：' . $snippet : ''), 'latency_ms' => $latency, 'content' => '', 'usage' => $usage];
+            return ['ok' => false, 'msg' => 'HTTP ' . $httpCode . ($snippet ? '：' . $snippet : ''), 'latency_ms' => $latency,
+                'content' => $accumulated, 'partial' => $accumulated !== '', 'usage' => $usage];
         }
         if (!$firstByteOk) {
-            return ['ok' => false, 'msg' => '上游流式响应为空', 'latency_ms' => $latency, 'content' => '', 'usage' => $usage];
+            return ['ok' => false, 'msg' => '上游流式响应为空', 'latency_ms' => $latency,
+                'content' => '', 'partial' => false, 'usage' => $usage];
         }
         if ($buffer !== '') {
             // 兜底：最后一段可能不带 \n\n
-            self::parseSseEvent($buffer, $accumulated, $usage, $onDelta);
+            self::parseSseEvent($buffer, $accumulated, $usage, $onDelta, $streamDone, $parseError);
+        }
+        if ($parseError !== '') {
+            return ['ok' => false, 'msg' => $parseError, 'latency_ms' => $latency,
+                'content' => $accumulated, 'partial' => $accumulated !== '', 'usage' => $usage];
+        }
+        if (!$streamDone) {
+            return ['ok' => false, 'msg' => '上游流式响应未正常结束', 'latency_ms' => $latency,
+                'content' => $accumulated, 'partial' => $accumulated !== '', 'usage' => $usage];
         }
         if ($accumulated === '') {
-            return ['ok' => false, 'msg' => '上游流式未返回有效内容', 'latency_ms' => $latency, 'content' => '', 'usage' => $usage];
+            return ['ok' => false, 'msg' => '上游流式未返回有效内容', 'latency_ms' => $latency,
+                'content' => '', 'partial' => false, 'usage' => $usage];
         }
 
         return [
@@ -493,6 +582,7 @@ class AiProxy
             'content'    => $accumulated,
             'usage'      => $usage,
             'latency_ms' => $latency,
+            'partial'    => false,
         ];
     }
 
@@ -501,10 +591,10 @@ class AiProxy
      * 支持：event: / data: / 空行（已在外层按 \n\n 切好）。
      * 终止信号 [DONE] 视作正常结束。
      */
-    private static function parseSseEvent($event, &$accumulated, &$usage, $onDelta)
+    private static function parseSseEvent($event, &$accumulated, &$usage, $onDelta, &$streamDone, &$parseError)
     {
         $dataLines = [];
-        foreach (preg_split("/\r\n|\n/", $event) as $line) {
+        foreach (preg_split("/\r\n|\r|\n/", $event) as $line) {
             if ($line === '' || strpos($line, ':') === false) continue;
             $field = substr($line, 0, strpos($line, ':'));
             $val   = ltrim(substr($line, strpos($line, ':') + 1));
@@ -512,9 +602,15 @@ class AiProxy
         }
         if (!$dataLines) return;
         $payload = implode("\n", $dataLines);
-        if ($payload === '[DONE]') return;
+        if ($payload === '[DONE]') {
+            $streamDone = true;
+            return;
+        }
         $json = json_decode($payload, true);
-        if (!is_array($json)) return;
+        if (!is_array($json)) {
+            $parseError = '上游流式返回不是合法 JSON';
+            return;
+        }
 
         // 收 usage（部分上游在最后一帧才发）
         if (isset($json['usage']) && is_array($json['usage'])) {

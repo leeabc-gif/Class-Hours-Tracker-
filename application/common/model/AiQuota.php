@@ -154,9 +154,15 @@ class AiQuota extends Model
 
         // ThinkPHP 5.1 的 update() 不认 ['exp','field-1']（会抛 not support data:[exp]），
         // 只支持 ['inc', n] / ['dec', n]。自增自减同样在 SQL 层完成，
-        // 配合 where balance>=? 保证「判断 + 扣减」是原子的，并发不会超扣。
+        // 余额和周期上限一起放进 WHERE，保证「判断 + 扣减」是原子的。
         $affected = self::where('id', (int)$this->id)
             ->where('balance', '>=', $points)
+            ->whereRaw(
+                '(`daily_limit` <= 0 OR `daily_used` + ? <= `daily_limit`)
+                 AND (`weekly_limit` <= 0 OR `weekly_used` + ? <= `weekly_limit`)
+                 AND (`monthly_limit` <= 0 OR `monthly_used` + ? <= `monthly_limit`)',
+                [$points, $points, $points]
+            )
             ->update([
                 'balance'      => ['dec', $points],
                 'total_used'   => ['inc', $points],

@@ -51,17 +51,18 @@
             - cd "$WORKSPACE"
             - |
               rm -f upgrade.sql
-              # 动态匹配当前版本的迁移（兼容 sh：用 tr 去点号，不用 bash 的 ${VAR//./}）
+              # 按当前版本号精确匹配迁移，日期不限，避免后来补建的迁移被旧版本覆盖。
               PLAIN=$(printf '%s' "$VER" | tr -d '.')
               MIG=""
               for cand in \
-                "database/migrations/20260909_v${PLAIN}_version_sync.sql" \
-                "database/migrations/20260909_${PLAIN}_version_sync.sql" ; do
+                database/migrations/*_v${PLAIN}_version_sync.sql \
+                database/migrations/*_${PLAIN}_version_sync.sql ; do
                 if [ -f "$cand" ]; then MIG="$cand"; break; fi
               done
               # 退路：取 migrations 目录中版本号最大的 *_version_sync.sql
               if [ -z "$MIG" ]; then
                 MIG=$(ls -1 database/migrations/*_version_sync.sql 2>/dev/null | sort | tail -n 1 || true)
+                [ -z "$MIG" ] || echo "警告：未找到 v${PLAIN} 精确迁移，兜底使用 $MIG"
               fi
               if [ -n "$MIG" ] && [ -f "$MIG" ]; then
                 cp "$MIG" upgrade.sql
@@ -79,6 +80,10 @@
                 -x "release/*" \
                 -x ".github/*" \
                 -x ".codebuddy/*" \
+                -x ".workbuddy/*" \
+                -x ".workbuddy" \
+                -x "_*/*" \
+                -x "_*" \
                 -x "tools/sign_manifest.php" \
                 -x "_env/*"
             - ls -la release/

@@ -174,7 +174,7 @@ function showPage(id){
   document.querySelectorAll('.bottom-nav .nav-item').forEach((n,i)=>{
     n.classList.toggle('active', i===navMap[id]);
   });
-  const navPages=['pageHome','pageAttendance','pageScores','pageAi'];
+  const navPages=['pageHome','pageAttendance','pageScores'];
   $(id) && navPages.includes(id) ? $('bottomNav').classList.remove('d-none') : $('bottomNav').classList.add('d-none');
   if(id==='pageAttendance') loadAttendance();
   if(id==='pageScores') loadScores();

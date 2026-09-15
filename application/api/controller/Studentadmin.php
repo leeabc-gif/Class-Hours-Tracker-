@@ -84,6 +84,100 @@ class Studentadmin extends Base
     }
 
     /**
+     * 可查看的班级选项（教师仅限自己授课班级，管理员不限）
+     * GET /api/studentadmin/classOptions
+     */
+    public function classOptions()
+    {
+        $q = SchoolClass::order('sort asc, id asc');
+        if (!$this->user->isAdmin()) {
+            $classIds = $this->teacherClassIds();
+            if (empty($classIds)) return $this->ok([]);
+            $q->whereIn('id', $classIds);
+        }
+
+        $list = [];
+        foreach ($q->select() as $class) {
+            $list[] = [
+                'id'   => (int)$class->id,
+                'name' => (string)$class->getData('name'),
+                'year' => (int)$class->year,
+            ];
+        }
+        return $this->ok($list);
+    }
+
+    /**
+     * 班级学情总览（教师仅限自己授课班级，管理员不限）
+     * GET /api/studentadmin/classLearningOverview?class_id=1
+     */
+    public function classLearningOverview()
+    {
+        $classId = intval($this->request->param('class_id', 0));
+        if (!$classId) return $this->fail('请指定班级');
+
+        $access = $this->resolveLearningClass($classId);
+        if (!$access['ok']) return $this->fail($access['msg'], $access['code']);
+
+        return $this->ok($this->buildClassLearningData($access['class']));
+    }
+
+    /**
+     * 生成班级教学建议（使用脱敏聚合数据，不发送学生对话正文）
+     * POST /api/studentadmin/analyzeClassLearning
+     * {"class_id":1}
+     */
+    public function analyzeClassLearning()
+    {
+        $data = $this->jsonInput();
+        $classId = intval(isset($data['class_id']) ? $data['class_id'] : 0);
+        if (!$classId) return $this->fail('请指定班级');
+
+        $access = $this->resolveLearningClass($classId);
+        if (!$access['ok']) return $this->fail($access['msg'], $access['code']);
+
+        $overview = $this->buildClassLearningData($access['class']);
+        $riskSummary = [];
+        foreach ($overview['risk_students'] as $student) {
+            foreach ($student['risk_codes'] as $code) {
+                if (!isset($riskSummary[$code])) $riskSummary[$code] = 0;
+                $riskSummary[$code]++;
+            }
+        }
+
+        $context = '请作为中职教师的班级教学诊断助手，基于以下脱敏聚合数据给出简洁、可执行的班级教学建议。'
+            . '输出：1.班级整体表现 2.主要风险 3.一周内分层干预方案 4.下周继续观察的指标。'
+            . '只使用已提供的数据，不要猜测学生隐私或编造事实。'
+            . '班级规模：' . json_encode($overview['students'], JSON_UNESCAPED_UNICODE)
+            . '；出勤：' . json_encode($overview['attendance'], JSON_UNESCAPED_UNICODE)
+            . '；成绩：' . json_encode($overview['scores'], JSON_UNESCAPED_UNICODE)
+            . '；AI答疑活跃度：' . json_encode($overview['ai'], JSON_UNESCAPED_UNICODE)
+            . '；风险类型统计：' . json_encode($riskSummary, JSON_UNESCAPED_UNICODE);
+
+        try {
+            $result = AiProxy::chat([
+                'teacher_id' => (int)$this->user->id,
+                'messages' => [
+                    ['role' => 'system', 'content' => '你是严谨、克制的班级教学诊断助手。'],
+                    ['role' => 'user', 'content' => $context],
+                ],
+                'source' => 'chat',
+                'temperature' => 0.2,
+                'ip' => $this->request->ip(),
+            ]);
+        } catch (\Throwable $e) {
+            return $this->fail('班级学情分析失败，请稍后重试');
+        }
+        if (empty($result['ok'])) return $this->fail($result['msg'] ?: '班级学情分析失败');
+
+        return $this->ok([
+            'content' => (string)$result['content'],
+            'model'   => isset($result['model']) ? (string)$result['model'] : '',
+            'points'  => isset($result['points']) ? (float)$result['points'] : 0,
+        ], '分析完成');
+    }
+
+    /**
      * 学生学情摘要（教师仅限自己授课班级，管理员不限）
      * GET /api/studentadmin/learningProfile?student_id=1
      */
@@ -582,6 +676,180 @@ class Studentadmin extends Base
         $this->log('create', 'student_score', (int)$row->id,
             "录入成绩：{$s->getData('name')} - {$title}");
         return $this->ok(['id' => (int)$row->id], '已记录');
+    }
+
+    // ============================================================
+    // 班级学情聚合辅助方法
+    // ============================================================
+
+    /** 校验班级是否存在，以及当前教师是否拥有该班级的查看权限。 */
+    private function resolveLearningClass($classId)
+    {
+        $class = SchoolClass::get((int)$classId);
+        if (!$class) return ['ok' => false, 'code' => 1, 'msg' => '班级不存在'];
+        if (!$this->user->isAdmin() &&
+            !in_array((int)$class->id, $this->teacherClassIds(), true)) {
+            return ['ok' => false, 'code' => 403, 'msg' => '无权查看该班级学情'];
+        }
+        return ['ok' => true, 'code' => 0, 'msg' => '', 'class' => $class];
+    }
+
+    /**
+     * 构建班级学情总览。
+     * 统计按当前学生归属班级取数，避免依赖出勤表中可能为空的冗余 class_id。
+     */
+    private function buildClassLearningData($class)
+    {
+        $classId = (int)$class->id;
+        $students = Student::where('class_id', $classId)->order('name asc, id asc')->select();
+        $studentIds = [];
+        $studentStats = [];
+        $activeCount = 0;
+        $pendingCount = 0;
+        $disabledCount = 0;
+
+        foreach ($students as $student) {
+            $studentId = (int)$student->id;
+            $studentIds[] = $studentId;
+            $studentStats[$studentId] = [
+                'id' => $studentId,
+                'sno' => (string)$student->sno,
+                'name' => (string)$student->getData('name'),
+                'status' => (int)$student->status,
+                'attendance_total' => 0,
+                'attendance_present' => 0,
+                'score_count' => 0,
+                'score_sum' => 0.0,
+                'ai_question_count' => 0,
+            ];
+            if ((int)$student->status === Student::STATUS_ACTIVE) $activeCount++;
+            if ((int)$student->status === Student::STATUS_PENDING) $pendingCount++;
+            if ((int)$student->status === Student::STATUS_DISABLED) $disabledCount++;
+        }
+
+        $attendance = [
+            'total' => 0, 'present' => 0, 'absent' => 0,
+            'leave' => 0, 'late' => 0, 'early' => 0,
+            'students_with_records' => 0, 'rate' => null,
+        ];
+        $scores = [
+            'count' => 0, 'graded_count' => 0, 'average' => null,
+            'distribution' => [
+                '0-59' => 0, '60-69' => 0, '70-79' => 0,
+                '80-89' => 0, '90-100' => 0,
+            ],
+        ];
+        $ai = ['message_count' => 0, 'active_students' => 0];
+
+        if (!empty($studentIds)) {
+            foreach (StudentAttendance::whereIn('student_id', $studentIds)->select() as $row) {
+                $studentId = (int)$row->student_id;
+                if (!isset($studentStats[$studentId])) continue;
+                $status = (string)$row->status;
+                $attendance['total']++;
+                $studentStats[$studentId]['attendance_total']++;
+                if (isset($attendance[$status])) $attendance[$status]++;
+                if ($status === 'present') {
+                    $studentStats[$studentId]['attendance_present']++;
+                }
+            }
+
+            foreach (StudentScore::whereIn('student_id', $studentIds)->select() as $row) {
+                $studentId = (int)$row->student_id;
+                if (!isset($studentStats[$studentId])) continue;
+                $scores['count']++;
+                $value = $row->score;
+                if ($value === null || $value === '') continue;
+                $score = (float)$value;
+                if (!is_finite($score)) continue;
+                $scores['graded_count']++;
+                $scores['average'] = ($scores['average'] === null ? 0 : $scores['average']) + $score;
+                $studentStats[$studentId]['score_count']++;
+                $studentStats[$studentId]['score_sum'] += $score;
+                if ($score < 60) $scores['distribution']['0-59']++;
+                elseif ($score < 70) $scores['distribution']['60-69']++;
+                elseif ($score < 80) $scores['distribution']['70-79']++;
+                elseif ($score < 90) $scores['distribution']['80-89']++;
+                else $scores['distribution']['90-100']++;
+            }
+
+            foreach (StudentAiMessage::whereIn('student_id', $studentIds)
+                ->where('role', 'user')->select() as $message) {
+                $studentId = (int)$message->student_id;
+                if (!isset($studentStats[$studentId])) continue;
+                $ai['message_count']++;
+                $studentStats[$studentId]['ai_question_count']++;
+            }
+        }
+
+        if ($attendance['total'] > 0) {
+            $attendance['rate'] = round($attendance['present'] / $attendance['total'], 4);
+        }
+        $attendanceStudents = 0;
+        $aiStudents = 0;
+        foreach ($studentStats as $stat) {
+            if ($stat['attendance_total'] > 0) $attendanceStudents++;
+            if ($stat['ai_question_count'] > 0) $aiStudents++;
+        }
+        $attendance['students_with_records'] = $attendanceStudents;
+        $ai['active_students'] = $aiStudents;
+        if ($scores['graded_count'] > 0) {
+            $scores['average'] = round($scores['average'] / $scores['graded_count'], 2);
+        }
+
+        $riskStudents = [];
+        foreach ($studentStats as $stat) {
+            $riskCodes = [];
+            $attendanceRate = $stat['attendance_total'] > 0
+                ? round($stat['attendance_present'] / $stat['attendance_total'], 4) : null;
+            $scoreAverage = $stat['score_count'] > 0
+                ? round($stat['score_sum'] / $stat['score_count'], 2) : null;
+            if ($stat['attendance_total'] >= 3 && $attendanceRate < 0.8) {
+                $riskCodes[] = 'attendance_low';
+            }
+            if ($stat['score_count'] > 0 && $scoreAverage < 60) {
+                $riskCodes[] = 'score_low';
+            }
+            if (!$riskCodes) continue;
+            $riskStudents[] = [
+                'id' => $stat['id'],
+                'sno' => $stat['sno'],
+                'name' => $stat['name'],
+                'risk_score' => count($riskCodes),
+                'risk_codes' => $riskCodes,
+                'attendance_rate' => $attendanceRate,
+                'score_average' => $scoreAverage,
+                'ai_question_count' => $stat['ai_question_count'],
+            ];
+        }
+        usort($riskStudents, function ($a, $b) {
+            if ($a['risk_score'] !== $b['risk_score']) {
+                return $b['risk_score'] - $a['risk_score'];
+            }
+            return strcmp($a['name'], $b['name']);
+        });
+
+        return [
+            'class' => [
+                'id' => $classId,
+                'name' => (string)$class->getData('name'),
+                'year' => (int)$class->year,
+            ],
+            'students' => [
+                'total' => count($studentIds),
+                'active' => $activeCount,
+                'pending' => $pendingCount,
+                'disabled' => $disabledCount,
+            ],
+            'attendance' => $attendance,
+            'scores' => $scores,
+            'ai' => $ai,
+            'risk_students' => $riskStudents,
+            'risk_rules' => [
+                'attendance_low' => '至少 3 条出勤记录且出勤率低于 80%',
+                'score_low' => '至少 1 条有效成绩且平均分低于 60',
+            ],
+        ];
     }
 
     // ============================================================
