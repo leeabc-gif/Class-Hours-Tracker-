@@ -550,6 +550,7 @@
         { p: 'admin-aihub', i: 'robot', t: 'AI 中转' },
         { p: 'admin-update', i: 'arrow-repeat', t: '系统更新' },
         { p: 'admin-reconcile', i: 'cash-stack', t: '月度对账' },
+        { p: 'admin-date-repair', i: 'calendar2-range', t: '日期校准' },
         { p: 'logs', i: 'journal-text', t: '操作日志' },
         { g: '教师视角' },
         { p: 'my-lessons', i: 'calendar2-check', t: '我的课时' },
@@ -619,6 +620,7 @@
     'admin-aihub': { t: 'AI 中转管理', a: '渠道 · 模型倍率 · 额度分配' },
     'admin-update': { t: '系统更新', a: '在线升级 · 备份 · 回滚' },
     'admin-reconcile': { t: '月度课酬对账', a: '教师 × 月份 交叉对账' },
+    'admin-date-repair': { t: '课时日期校准', a: '周次/星期 ↔ 授课日期 一致性修复' },
     'logs': { t: '操作日志', a: '管理员' },
     'my-lessons': { t: '课时记录', a: '查看 · 录入 · 管理' },
     'my-courses': { t: '我的课程', a: '课程库 · 单价 · 收藏' },
@@ -1606,7 +1608,7 @@
       <div class="col-4"><label class="form-label">节次</label><select id="fSection" class="form-select" onchange="KS.autoPeriods()"></select></div>
     </div>
     <div class="row g-2 mt-0">
-      <div class="col-6"><label class="form-label">实际授课日期</label><input id="fDate" type="date" class="form-control" value="${lesson&&lesson.teach_date?lesson.teach_date:''}"></div>
+      <div class="col-6"><label class="form-label">实际授课日期</label><input id="fDate" type="date" class="form-control" onchange="KS.syncWeekFromDate('f')" value="${lesson&&lesson.teach_date?lesson.teach_date:''}"></div>
       <div class="col-3"><label class="form-label">上课节数</label><input id="fPeriods" type="number" step="0.5" min="1" max="12" class="form-control" value="${lesson?lesson.periods:2}" oninput="KS.previewAmount()"></div>
       <div class="col-3"><label class="form-label">上课类型</label><select id="fType" class="form-select">${typeOpts}</select></div>
     </div>
@@ -1626,7 +1628,9 @@
     fillWeekdaySel($('#fWeekday'), lesson ? lesson.weekday : 1);
     fillSectionSel($('#fSection'), lesson ? lesson.section : 1);
     const r = await termWeekRange(termId); if (lesson && (lesson.week < r.min || lesson.week > r.max)) $('#fWeek').value = r.min;
-    App.autoDate(); App.autoPeriods();
+    // 新增时按默认周次/星期自动填日期；编辑时保留记录原有日期，避免一打开弹窗就静默改写（尤其调课/补课）
+    if (!lesson) { App.autoDate(); App.autoPeriods(); }
+    else { App.previewAmount(); }
     // 初始化班级多选控件（编辑时回填已有班级）
     if (window.classPickerInit) {
       classPickerInit('fClassesBox', lesson ? lesson.classes : '');
@@ -1680,14 +1684,73 @@
     const termId = ($('#fTermId') && $('#fTermId').value) || ($('#qTermId') && $('#qTermId').value) || (curTerm() && curTerm().id);
     const term = (App.boot.terms||[]).find(t=>t.id==termId) || curTerm();
     if (!term || !term.start_date) return;
-    const w = parseInt(($('#fWeek')||{}).value || 1,10);
-    const wd = parseInt(($('#fWeekday')||{}).value || 1,10);
-    const base = new Date(term.start_date + 'T00:00:00');
-    base.setDate(base.getDate() + (w-1)*7 + (wd-1));
-    const y = base.getFullYear(), mo = ('0'+(base.getMonth()+1)).slice(-2), da=('0'+base.getDate()).slice(-2);
-    const ds = y + '-' + mo + '-' + da;
+    const wEl = $('#fWeek') || $('#qWeek'), wdEl = $('#fWeekday') || $('#qWeekday');
+    const ds = App.computeDateStr(term, parseInt((wEl||{}).value || 1,10), parseInt((wdEl||{}).value || 1,10));
+    if (!ds) return;
     if ($('#fDate')) $('#fDate').value = ds;
     if ($('#qDate')) $('#qDate').value = ds;
+  };
+  // 由「周次+星期」按开学日(第1周周一)推算 YYYY-MM-DD
+  App.computeDateStr = function(term, week, weekday){
+    if (!term || !term.start_date) return '';
+    const base = new Date(term.start_date + 'T00:00:00');
+    if (isNaN(base.getTime())) return '';
+    base.setDate(base.getDate() + (week-1)*7 + (weekday-1));
+    const y = base.getFullYear(), mo = ('0'+(base.getMonth()+1)).slice(-2), da = ('0'+base.getDate()).slice(-2);
+    return y + '-' + mo + '-' + da;
+  };
+  // 由「实际日期」按开学日反算 {week, weekday}；超出学期/无法解析返回 null
+  App.computeWeekFromDate = function(term, dateStr){
+    if (!term || !term.start_date || !dateStr) return null;
+    const base = new Date(term.start_date + 'T00:00:00');
+    const cur  = new Date(dateStr + 'T00:00:00');
+    if (isNaN(base.getTime()) || isNaN(cur.getTime())) return null;
+    const dayMs = 86400000;
+    // 以"日历日零点"差值计算，规避夏令时；按天四舍五入
+    const diff = Math.round((cur.getTime() - base.getTime()) / dayMs);
+    if (diff < 0) return null;
+    return { week: Math.floor(diff / 7) + 1, weekday: (diff % 7) + 1 };
+  };
+  // 反向联动：用户手改日期 → 反算并设置周次/星期（仅当落在当前学期周次范围内）
+  App.syncWeekFromDate = function(scope){
+    const prefix = scope === 'q' ? 'q' : 'f';
+    const dateEl = $('#' + prefix + 'Date');
+    const weekEl = $('#' + prefix + 'Week');
+    const wdEl   = $('#' + prefix + 'Weekday');
+    if (!dateEl || !weekEl || !wdEl || !dateEl.value) return;
+    const termId = ($('#fTermId') && $('#fTermId').value) || (curTerm() && curTerm().id);
+    const term = (App.boot.terms||[]).find(t=>t.id==termId) || curTerm();
+    if (!term || !term.start_date) return;
+    const r = App.computeWeekFromDate(term, dateEl.value);
+    if (!r) return;
+    const min = parseInt(term.start_week || 1, 10), max = parseInt(term.end_week || 20, 10);
+    if (r.week < min || r.week > max) return; // 落在学期之外，不强行改，交给提交校验提示
+    weekEl.value = r.week;
+    wdEl.value = r.weekday;
+  };
+  /**
+   * 提交前一致性校验（以周次/星期排课位置为准）。
+   * 普通/实训课日期必须等于按周次推导出的日期；调课/补课允许偏离。
+   * 返回 '' 表示通过，否则返回错误文案。
+   */
+  App.checkLessonDate = function(scope){
+    const prefix = scope === 'q' ? 'q' : 'f';
+    const typeEl = $('#' + prefix + 'Type');
+    const type = typeEl ? typeEl.value : 'normal';
+    if (type === 'swap' || type === 'makeup') return '';
+    const dateEl = $('#' + prefix + 'Date');
+    const date = dateEl ? dateEl.value : '';
+    if (!date) return '请填写实际授课日期（或改选调课/补课类型）';
+    const termId = ($('#fTermId') && $('#fTermId').value) || (curTerm() && curTerm().id);
+    const term = (App.boot.terms||[]).find(t=>t.id==termId) || curTerm();
+    if (!term || !term.start_date) return ''; // 未配置开学日，无法校验，交给后端
+    const week = parseInt(($('#' + prefix + 'Week')||{}).value || 0, 10);
+    const wd   = parseInt(($('#' + prefix + 'Weekday')||{}).value || 0, 10);
+    const expect = App.computeDateStr(term, week, wd);
+    if (date !== expect) {
+      return '授课日期 ' + date + ' 与「第' + week + '周 ' + (WD[wd]||'') + '」不匹配，应为 ' + expect;
+    }
+    return '';
   };
   App.previewAmount = function(){
     const p = parseFloat($('#fPeriods') && $('#fPeriods').value || 2);
@@ -1699,6 +1762,13 @@
   App.submitLesson = async function (id) {
     const courseName = $('#fCourseName').value.trim();
     if (!courseName) { toast('请填写课程名称','warn'); return; }
+    const dateErr = App.checkLessonDate('f');
+    if (dateErr) {
+      // 调课/补课已在 check 内放行；这里对普通/实训课拦截，防止周次与日期错位入库
+      toast(dateErr, 'warn');
+      const d = $('#fDate'); if (d) d.focus();
+      return;
+    }
     const payload = {
       id: id || undefined,
       term_id: parseInt($('#fTermId') ? $('#fTermId').value : (curTerm() && curTerm().id), 10),
@@ -1783,7 +1853,7 @@
         <div class="col-4"><label class="form-label">节次</label><select id="qSection" class="form-select"></select></div>
       </div>
       <div class="row g-2 mt-0">
-        <div class="col-6"><label class="form-label">授课日期(可留空)</label><input id="qDate" type="date" class="form-control"></div>
+        <div class="col-6"><label class="form-label">授课日期(可留空)</label><input id="qDate" type="date" class="form-control" onchange="KS.syncWeekFromDate('q')"></div>
         <div class="col-6"><label class="form-label">上课类型</label><select id="qType" class="form-select">` + typeOpts + `</select></div>
       </div>
       <div class="mt-2"><label class="form-label">备注</label><input id="qRemark" class="form-control"></div>`;
@@ -1835,6 +1905,12 @@
   App.quickSave = async function () {
     const name = $('#qCourseName').value.trim();
     if (!name) { toast('请填写课程名','warn'); return; }
+    const dateErr = App.checkLessonDate('q');
+    if (dateErr) {
+      toast(dateErr, 'warn');
+      const d = $('#qDate'); if (d) d.focus();
+      return;
+    }
     const payload = {
       term_id: curTerm() && curTerm().id,
       course_id: (function(){ const v=$('#qCourse').value||''; if(v.startsWith('fav_')||v.startsWith('all_')) return parseInt(v.split('_')[1],10); return 0; })(),
@@ -4056,6 +4132,86 @@
     const q = [];
     if (term) q.push('term_id=' + term.id);
     downloadCSV('/api/export/reconcile' + (q.length ? '?' + q.join('&') : '') + '&t=' + Date.now());
+  };
+
+  // -------- 课时日期校准（周次/星期 ↔ 授课日期 一致性修复） --------
+  ROUTERS['admin-date-repair'] = async function(host){
+    const terms = App.boot.terms || [];
+    const termOpts = terms.map(t=>'<option value="'+t.id+'"'+(t.is_current===1?' selected':'')+'>'+esc(t.name)+(t.start_date?('（'+t.start_date+' 开学）'):'（未设开学日）')+'</option>').join('');
+    // 教师下拉（管理员可限定某位教师）
+    let teacherOpts = '<option value="">全部教师</option>';
+    try {
+      const tres = await GET('/api/admin/teachers');
+      if (tres.code === 0) {
+        (tres.data||[]).filter(u=>u.role==='teacher').forEach(u=>{
+          teacherOpts += '<option value="'+u.id+'">'+esc(u.name)+'</option>';
+        });
+      }
+    } catch(e) {}
+    host.innerHTML = '<div class="card"><div class="card-h"><i class="bi bi-calendar2-range text-primary"></i><span class="tt">课时「周次 ↔ 授课日期」校准</span></div>'
+      + '<div class="card-b">'
+      + '  <div class="alert alert-info py-2 small mb-3">以<b>周次/星期（排课位置）</b>为准，把<b>实际授课日期</b>重算为「开学日 + (周次−1)×7 + (星期−1)」。'
+      + '用于修复「第1周周一却记成 9-14」这类日期错位。请先<b>预览差异、核对无误</b>后再执行。调课/补课默认排除（允许日期偏离）。</div>'
+      + '  <div class="row g-2 align-items-end mb-3">'
+      + '    <div class="col-3"><label class="form-label">学期</label><select id="drTerm" class="form-select form-select-sm">'+termOpts+'</select></div>'
+      + '    <div class="col-3"><label class="form-label">教师（可选）</label><select id="drTeacher" class="form-select form-select-sm">'+teacherOpts+'</select></div>'
+      + '    <div class="col-3 d-flex align-items-center pb-1"><div class="form-check"><input class="form-check-input" type="checkbox" id="drSpecial"><label class="form-check-label small" for="drSpecial">同时纳入调课/补课</label></div></div>'
+      + '    <div class="col-3 text-end"><button class="btn btn-outline-primary btn-sm" onclick="KS.dateRepairPreview()"><i class="bi bi-search me-1"></i>预览差异</button></div>'
+      + '  </div>'
+      + '  <div id="drSummary" class="small mb-2"></div>'
+      + '  <div class="table-responsive" style="max-height:calc(100vh - 340px);overflow:auto">'
+      + '  <table class="table table-sm table-hover align-middle"><thead class="sticky-top"><tr>'
+      + '<th>ID</th><th>课程</th><th>班级</th><th>排课位置</th><th>类型</th><th>当前日期</th><th></th><th>应更正为</th></tr></thead>'
+      + '<tbody id="drBody"><tr><td colspan="8" class="text-center text-muted py-4">选择学期后点「预览差异」</td></tr></tbody></table></div>'
+      + '  <div class="mt-3 text-end"><button class="btn btn-danger btn-sm" id="drRunBtn" disabled onclick="KS.dateRepairRun()"><i class="bi bi-wrench me-1"></i>按预览结果一键校准（仅更正上表记录）</button></div>'
+      + '</div></div>';
+  };
+  let _drIds = [];
+  App.dateRepairPreview = async function(){
+    const body = $('#drBody'), sum = $('#drSummary'), runBtn = $('#drRunBtn');
+    if (!body) return;
+    runBtn.disabled = true; _drIds = [];
+    const termId = $('#drTerm').value || '';
+    const teacherId = $('#drTeacher').value || '';
+    const includeSpecial = $('#drSpecial').checked ? 1 : 0;
+    body.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">扫描中…</td></tr>';
+    sum.innerHTML = '';
+    let d;
+    try {
+      const res = await GET('/api/lesson/dateRepairPreview', { term_id: termId, teacher_id: teacherId, include_special: includeSpecial });
+      if (res.code !== 0) { body.innerHTML='<tr><td colspan="8" class="text-center text-danger py-4">'+esc(res.msg)+'</td></tr>'; return; }
+      d = res.data;
+    } catch(e) { body.innerHTML='<tr><td colspan="8" class="text-center text-danger py-4">请求失败</td></tr>'; return; }
+    if (gone('drBody')) return;
+    const rows = d.preview || [];
+    _drIds = d.ids || [];
+    if (!d.total) {
+      body.innerHTML = '<tr><td colspan="8"><div class="dk-empty"><i class="bi bi-check-circle text-success"></i> 共扫描 '+ (d.scanned||0) +' 条，未发现周次与日期不一致的记录</div></td></tr>';
+      sum.innerHTML = '<span class="text-success">数据一致，无需校准。</span>';
+      return;
+    }
+    sum.innerHTML = '<span class="text-danger fw-bold">发现 '+d.total+' 条不一致记录</span><span class="text-muted ms-2">（下表预览前 '+rows.length+' 条；执行会处理全部 '+(_drIds.length)+' 条）。规则：'+esc(d.rule||'')+'</span>';
+    body.innerHTML = rows.map(r=>'<tr>'
+      + '<td class="small text-muted">'+r.id+'</td>'
+      + '<td><b>'+esc(r.course_name||'')+'</b></td>'
+      + '<td class="small">'+esc(r.classes||'')+'</td>'
+      + '<td>第'+r.week+'周 '+ (WD[r.weekday]||'') +'</td>'
+      + '<td><span class="badge '+App.typeBadgeClass(r.type)+'">'+App.enumTypeText(r.type)+'</span></td>'
+      + '<td class="small text-danger">'+esc(r.date_now||'')+'</td>'
+      + '<td class="text-muted">→</td>'
+      + '<td class="small text-success fw-bold">'+esc(r.date_fix||'')+'</td>'
+      + '</tr>').join('');
+    runBtn.disabled = false;
+  };
+  App.dateRepairRun = async function(){
+    if (!_drIds.length) { toast('没有可校准的记录','warn'); return; }
+    if (!confirm('确认把 '+_drIds.length+' 条记录的「授课日期」按周次/星期重算？此操作会写入数据库并记入操作日志。')) return;
+    const runBtn = $('#drRunBtn'); runBtn.disabled = true;
+    try {
+      const res = await POST('/api/lesson/dateRepairRun', { confirm: 1, ids: _drIds });
+      if (res.code === 0) { toast(res.msg || ('已修正 '+(res.data&&res.data.updated||0)+' 条')); App.dateRepairPreview(); }
+      else { toast(res.msg,'err'); runBtn.disabled = false; }
+    } catch(e) { toast('执行失败：'+(e.message||''),'err'); runBtn.disabled = false; }
   };
 
   // -------- 系统更新 --------

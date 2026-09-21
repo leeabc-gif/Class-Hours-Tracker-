@@ -1,19 +1,19 @@
 {
-    "latest_version": "1.2.2",
+    "latest_version": "1.2.3",
     "min_php": "7.4",
-    "published_at": "2026-09-15T04:31:24+00:00",
-    "changelog": "### 修复\n- 修复学生端 AI 答疑页在 375px 等移动视口下，固定底部导航遮挡输入栏发送按钮的问题；AI 页面进入后隐藏全局底部导航，保留页面自身返回和历史会话入口。\n- 补充学生端真实 SSE 答疑回归夹具，验证流式正文、学生额度扣减和历史会话恢复链路。\n- 完成教师/管理员学生学情页面的班级权限、空班、风险学生详情和班级 AI 建议浏览器回归。\n\n### 数据库\n- 新增 `20260912_v122_version_sync.sql`，仅同步 `ks_setting.app_version`，不含 DDL；已完成 v1.2.0 学生模块建表的站点可直接升级。\n\n### 兼容性\n- 最低可升级版本：1.1.3。",
+    "published_at": "2026-09-21T05:42:46+00:00",
+    "changelog": "### 修复\n- 修复教师端课时记录的「周次/星期」与「授课日期」可能错位的问题：单条录入增加硬校验，冲突时以 week/weekday（排课位置）为准，`teach_date` 由 `Term::dateOf()` 推导，swap/makeup 调课补课正常放行。\n- 新增管理员「历史校准」工具：先 `dateRepairPreview` 预览错位记录，确认后 `dateRepairRun` 批量修正（需 confirm=1、单次上限 1000、写入 date_repair 操作日志），避免误改。\n- 前端录入页增加日期↔周次双向联动与提交前校验，新增管理员校准页。\n\n### 数据库\n- 新增 `20260921_v123_version_sync.sql`，仅同步 `ks_setting.app_version`，不含 DDL；已完成 v1.2.0 学生模块建表的站点可直接升级。\n\n### 兼容性\n- 最低可升级版本：1.1.3。",
     "files": [
         {
-            "name": "keshi-1.2.2.zip",
-            "url": "https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/v1.2.2/keshi-1.2.2.zip",
-            "sha256": "2919aef5d8e695c9d6b04c19741aa1bf7807fa947c4834e4ca68b5ab0abde7c5",
-            "version": "1.2.2",
-            "size": 841827
+            "name": "keshi-1.2.3.zip",
+            "url": "https://github.com/leeabc-gif/Class-Hours-Tracker-/releases/download/v1.2.3/keshi-1.2.3.zip",
+            "sha256": "2dffb0b87bda7f9e93992a17b81c616b410a8ca12e3c64e2989de548de647865",
+            "version": "1.2.3",
+            "size": 848398
         }
     ],
     "requires": {
         "from_version": "1.1.3"
     },
-    "signature": "dG0I3Zaw0tO1WVTH+BG21Cf64HldzgPvsQPVDFdEtwydi8Y5D/92+FkDpcFlzxXcQXLnV9tjVM2nSyLjk7vIo9Dt8SsOjqM3u5nyVtpgm5NMU33foBcmclsjvNvIjzAzOyT/TuI7BcrR43uyihftJDqONBcDW55gEU9sVm5C3Rz87HCJcB6xlKeGdlOqZgcaPc3SfeR89U+e7D+J9uezWtRpUH/HA3im6BCTo1S0HJO1BnySq6pKXES0DXXZ2idw/EVJI0zRwDgKAYs4S1aul9VTUQmKEvT8cqDAqe7ZQ/QuRWyMUaeYDBDMquyWBjXXfXCkkgpP57BdPJ3EWuUwag=="
+    "signature": "OmXDMxxhRXQ3LQ2n0u3DrJ1Sc6KGJGdkDCKM24lnZEi5FlC7GJX5vdmLom3Fv7d8gb2LXG1Z00EW/A8KLrNzLYnsDcatWUwbbqu9hkgOyP7H+EZ/dTHnOL0PlVZUW1PntU9m83FWR25uOiyn4Fza39LSTmh8rVhfi/rXpOs9C0FrZtnKf7u5+Lr/gTKpQLRFiacZrkf5+f4BwSbVybw+p7+DobIlP0VFpbfHQMeEjYRAqNMYCc2bv+Oeia9DlTxuCcGo54sq9pGO2end3wyA8H0SHBUaTHd38nDfydGR90qkxB8QV78NHH39uNylyfnSyJDeeviZ+uO62tqOWxDp+Q=="
 }

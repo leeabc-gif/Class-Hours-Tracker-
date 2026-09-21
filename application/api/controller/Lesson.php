@@ -4,6 +4,7 @@ namespace app\api\controller;
 use app\common\controller\Base;
 use app\common\model\Course;
 use app\common\model\Lesson as LessonModel;
+use app\common\model\Teacher;
 use app\common\model\Term;
 
 /**
@@ -496,6 +497,159 @@ class Lesson extends Base
     }
 
     // ============================================================
+    // 管理员：周次/星期 ↔ 授课日期 历史数据校准（以排课位置为准）
+    // ============================================================
+
+    /**
+     * 校准预览：找出 teach_date 与按「周次+星期+学期开学日」推导日期不一致的记录。
+     * 默认只看未软删、已填日期、常规/实训课（调课/补课允许偏离，include_special=1 才纳入）。
+     */
+    public function dateRepairPreview()
+    {
+        $this->requireLogin();
+        if (!$this->user->isAdmin()) {
+            return $this->fail('仅管理员可执行数据校准');
+        }
+        $res = $this->collectDateMismatch();
+        if (is_string($res)) {
+            return $this->fail($res);
+        }
+        [$mismatch, $scanned] = $res;
+
+        // 预览只回传前 200 条，避免响应过大；执行仍按全部命中的 id
+        $preview = array_slice($mismatch, 0, 200);
+        return $this->ok([
+            'total'       => count($mismatch),
+            'scanned'     => $scanned,
+            'ids'         => array_map(function ($m) { return $m['id']; }, $mismatch),
+            'preview'     => $preview,
+            'rule'        => '以周次/星期（排课位置）为准，重算授课日期 = 开学日 + (周次-1)*7 + (星期-1)',
+        ], '预览完成');
+    }
+
+    /**
+     * 执行校准：按预览返回的 id 列表（或同条件全量）批量把 teach_date 改成推导值。
+     * 必须带 confirm=1；单次最多 1000 条。
+     */
+    public function dateRepairRun()
+    {
+        $this->requireLogin();
+        if (!$this->user->isAdmin()) {
+            return $this->fail('仅管理员可执行数据校准');
+        }
+        $data = $this->jsonInput();
+        if (empty($data['confirm'])) {
+            return $this->fail('缺少确认参数 confirm');
+        }
+
+        $ids = isset($data['ids']) && is_array($data['ids'])
+            ? array_values(array_unique(array_filter(array_map('intval', $data['ids']), function ($i) { return $i > 0; })))
+            : [];
+
+        if ($ids) {
+            if (count($ids) > 1000) {
+                return $this->fail('单次最多校准 1000 条，请缩小学期/教师范围分批处理');
+            }
+            $rows = LessonModel::where('id', 'in', $ids)->where('deleted_at', 0)->select();
+        } else {
+            // 未给 id：按当前筛选条件全量执行
+            $res = $this->collectDateMismatch();
+            if (is_string($res)) {
+                return $this->fail($res);
+            }
+            [$mismatch] = $res;
+            $wantIds = array_slice(array_map(function ($m) { return $m['id']; }, $mismatch), 0, 1000);
+            if (empty($wantIds)) {
+                return $this->ok(['updated' => 0], '没有需要校准的记录');
+            }
+            $rows = LessonModel::where('id', 'in', $wantIds)->where('deleted_at', 0)->select();
+        }
+
+        $updated = 0;
+        $samples = [];
+        foreach ($rows as $lesson) {
+            $term = Term::get($lesson->term_id);
+            $expected = $term ? Term::dateOf($term, (int)$lesson->week, (int)$lesson->weekday) : null;
+            if ($expected === null || $lesson->teach_date === $expected || $lesson->teach_date === null || $lesson->teach_date === '') {
+                continue;
+            }
+            $before = $lesson->teach_date;
+            $lesson->teach_date = $expected;
+            if ($lesson->save()) {
+                $updated++;
+                if (count($samples) < 10) {
+                    $samples[] = '#' . $lesson->id . ' ' . $lesson->course_name . '：' . $before . ' → ' . $expected;
+                }
+            }
+        }
+
+        $this->log('date_repair', 'lesson', 0, sprintf(
+            '校准课时周次↔日期：更新 %d 条（以排课位置为准）。示例：%s',
+            $updated, implode('；', $samples)
+        ));
+
+        return $this->ok(['updated' => $updated, 'samples' => $samples], "校准完成，共修正 {$updated} 条记录");
+    }
+
+    /**
+     * 收集日期不一致的记录（预览/执行共用）。
+     * @return array|string  [mismatchRows, scannedCount] 或错误文案
+     */
+    private function collectDateMismatch()
+    {
+        $termId = intval($this->input('term_id', 0));
+        $teacherId = intval($this->input('teacher_id', 0));
+        $includeSpecial = intval($this->input('include_special', 0)) === 1;
+
+        $q = LessonModel::where('deleted_at', 0);
+        if ($termId) {
+            $q->where('term_id', $termId);
+        }
+        if ($teacherId) {
+            $q->where('teacher_id', $teacherId);
+        }
+        $rows = $q->order('term_id asc, week asc, weekday asc, id asc')->limit(20000)->select();
+
+        $termCache = [];
+        $mismatch = [];
+        $scanned = 0;
+        foreach ($rows as $r) {
+            // 调课/补课默认排除
+            $type = $r->getData('type');
+            if (!$includeSpecial && in_array($type, ['swap', 'makeup'], true)) {
+                continue;
+            }
+            if ($r->teach_date === null || $r->teach_date === '') {
+                continue; // 未填日期的不处理（那是另一类问题）
+            }
+            if (!isset($termCache[$r->term_id])) {
+                $termCache[$r->term_id] = Term::get($r->term_id);
+            }
+            $term = $termCache[$r->term_id];
+            if (!$term || !$term->start_date) {
+                continue; // 学期没配开学日，无法推导
+            }
+            $scanned++;
+            $expected = Term::dateOf($term, (int)$r->week, (int)$r->weekday);
+            if ($expected !== null && $r->teach_date !== $expected) {
+                $mismatch[] = [
+                    'id'          => (int)$r->id,
+                    'term_id'     => (int)$r->term_id,
+                    'teacher_id'  => (int)$r->teacher_id,
+                    'course_name' => $r->course_name,
+                    'classes'     => $r->classes,
+                    'week'        => (int)$r->week,
+                    'weekday'     => (int)$r->weekday,
+                    'type'        => $type,
+                    'date_now'    => $r->teach_date,
+                    'date_fix'    => $expected,
+                ];
+            }
+        }
+        return [$mismatch, $scanned];
+    }
+
+    // ============================================================
     // 内部方法
     // ============================================================
 
@@ -614,6 +768,26 @@ class Lesson extends Base
         $date = trim(isset($data['teach_date']) ? $data['teach_date'] : '');
         if ($date !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
             return '授课日期格式应为 YYYY-MM-DD';
+        }
+
+        // 周次/星期（排课位置）与实际授课日期一致性硬校验，杜绝再次产生
+        // 「第1周周一却是 9-14」这类错位数据。仅单条录入走这里：
+        //  - 批量生成/导入的日期由 Term::dateOf 推导，天然自洽；
+        //  - 调课(swap)/补课(makeup) 本来就允许日期偏离排课位置，放行；
+        //  - 开学日未配置或日期留空时不拦截。
+        if (!$isBatch && $date !== '') {
+            $typeForCheck = isset($data['type']) ? $data['type'] : 'normal';
+            if (!in_array($typeForCheck, ['swap', 'makeup'], true)) {
+                $consistent = Term::checkDateConsistency(
+                    $term,
+                    intval(isset($data['week']) ? $data['week'] : 0),
+                    $weekday,
+                    $date
+                );
+                if ($consistent !== true) {
+                    return $consistent;
+                }
+            }
         }
 
         return true;
